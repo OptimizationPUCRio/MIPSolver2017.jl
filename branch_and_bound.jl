@@ -94,10 +94,10 @@ function solveMIP(m::JuMP.Model)
   flagOpt = 0 # flag that indicates if a viable solution has been found
   branched = false # flag that indicates if a branch has occurred in this iteration
   traverse = 1 # 1 for breadth, -1 for depth
-  tol = 1e-5 # tolerance (%)
+  tol = 0.01 # tolerance (%)
   time0 = time_ns()
 
-  while !isempty(nodes) && abs((bestVal - bestBound)/bestVal) > tol && (time_ns()-time0)/1e9 < 600000
+  while !isempty(nodes) && abs((bestVal - bestBound)/bestVal) > tol && (time_ns()-time0)/1e9 < 600
 
     # Change traverse method every 10 iterations for better bound discovery
     if iter%10 == 0
