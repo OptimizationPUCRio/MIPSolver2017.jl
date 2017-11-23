@@ -56,9 +56,9 @@ function cutting_planes(model::JuMP.Model, VecBin::Vector{Int}, MaxIter::Int64 =
     end
 
 
+    model = compose_model(model, m_origin, n_origin, Astd, b, cstd, xlb, xub, m, n)
 
-
-
+    return model
 end
 
 function extract_data(model::JuMP.Model)
