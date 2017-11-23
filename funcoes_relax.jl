@@ -34,22 +34,21 @@ function cutting_planes(model::JuMP.Model, VecBin::Vector{Int}, MaxIter::Int64 =
 
         #Test convergence
         if length(j) == 0
-#            H = [H; iter z -999 status X[1:n]']
+
             #return X[1:n], z
             convergence = 1
         elseif iter >= MaxIter
             j = j[1]
-#            H = [H; iter z j status X[1:n]']
+
             convergence  = -1
         else
             j = j[1] #pick a fractional variable address (the first one)
 
-#            H = [H; iter z j status X[1:n]']
             #Calculating Chvatal-Gomory coefficients
             NBas = find(X.<=tol) #finding nonbasic variable addresses
             Bas = deleteat!(collect(1:n), NBas) #finding basic variable addresses
             i = find(Bas.==j) # finding dictionary line related to the fractional variable
-            #D = \(Astd[:,Bas],Astd[:,NBas])
+
             D=((Astd[:,Bas]'*Astd[:,Bas])\Astd[:,Bas]')*Astd[:,NBas]
             q0 =  floor.(X[j])
             qi = zeros(1,n)
@@ -72,7 +71,7 @@ function cutting_planes(model::JuMP.Model, VecBin::Vector{Int}, MaxIter::Int64 =
     println(z)
     println(status)
     print(iter)
-    model_F = compose_model(Astd, b, cstd, xlb, xub, flag_sense, solver)
+    model_F = compose_model(Astd, b, cstd, xlb, xub, flag_sense, solver, X, z, status)
 
     return model_F
 end
@@ -138,7 +137,7 @@ function solve_LP(Astd, b, cstd, xlb, xub, solver)
     return model_LP.colVal, model_LP.objVal, status
 end
 
-function compose_model(Astd, b, cstd, xlb, xub, flag_sense, solver)
+function compose_model(Astd, b, cstd, xlb, xub, flag_sense, solver, X, z, status)
     m, n = size(Astd)
 
     model_F = Model(solver=solver)
@@ -154,6 +153,11 @@ function compose_model(Astd, b, cstd, xlb, xub, flag_sense, solver)
     else
         @objective(model_F, :Max, sum(cstd[j]*x[j] for j=1:n))
     end
+
+    model_F.colVal = X
+    model_F.objVal = z
+    model_F.ext[:status] = status
+
 
     return model_F
 end
