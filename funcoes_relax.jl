@@ -11,58 +11,75 @@ function cutting_planes(model::JuMP.Model, VecBin::Vector{Int}, MaxIter::Int64 =
     status = ""
 
     while convergence == -2
-        X, z, status = solve_LP(Astd, b, cstd, xlb, xub, solver, m, n)
+        X, z, status = solve_LP(Astd, b, cstd, xlb, xub, solver)
 
         # Finding fractional variable address
-        j = find(min(X[1:n]-floor(X[1:n]),ceil(X[1:n])-X[1:n]).>tol)
+        j = find(min.(X[1:n]-floor.(X[1:n]),ceil.(X[1:n])-X[1:n]).>tol)
 
         # Removing index from continous variables
-        for i in VecBin
-            deleteat!(j,find(j .== i))
+        tmp = min(size(VecBin)[1], size(j)[1])
+        tmp_ind = []
+        for i in 1:tmp
+            if size(VecBin)[1] <= size(j)[1]
+                if VecBin[i] in j
+                    push!(tmp_ind,VecBin[i])
+                end
+            else
+                if j[i] in VecBin
+                    push!(tmp_ind,j[i])
+                end
+            end
         end
+        j = tmp_ind
 
         #Test convergence
         if length(j) == 0
-            H = [H; iter z -999 status X[1:n]']
+#            H = [H; iter z -999 status X[1:n]']
             #return X[1:n], z
             convergence = 1
         elseif iter >= MaxIter
             j = j[1]
-            H = [H; iter z j status X[1:n]']
+#            H = [H; iter z j status X[1:n]']
             convergence  = -1
         else
-
             j = j[1] #pick a fractional variable address (the first one)
 
-            H = [H; iter z j status X[1:n]']
+#            H = [H; iter z j status X[1:n]']
             #Calculating Chvatal-Gomory coefficients
-            NBas = find(X.<tol)[1:n] #finding nonbasic variable addresses
-            Bas = deleteat!(collect(1:(n+m)), NBas) #finding basic variable addresses
+            NBas = find(X.<=tol) #finding nonbasic variable addresses
+            Bas = deleteat!(collect(1:n), NBas) #finding basic variable addresses
             i = find(Bas.==j) # finding dictionary line related to the fractional variable
             #D = \(Astd[:,Bas],Astd[:,NBas])
             D=((Astd[:,Bas]'*Astd[:,Bas])\Astd[:,Bas]')*Astd[:,NBas]
-            q0 =  floor(X[j])
-            qi = zeros(1,n+m)
+            q0 =  floor.(X[j])
+            qi = zeros(1,n)
             qi[j] = 1
-            qi[NBas] = floor(D[i,:])
+            qi[NBas] = floor.(D[i,:])
 
             #Adding the cut as new a constraint into the problem stand. form
-            Astd = [[Astd zeros(m,1)];[qi 1]] #new constrait and new slack
+            Astd = [[Astd zeros(m,1)]; [qi 1]] #new constrait and new slack
             b = [b;q0]
             cstd = [cstd;0]
+            xlb = [xlb; 0]
+            xub = [xub; +Inf]
             m+=1
+            n+=1
             iter+=1
         end
     end
 
+    println(X)
+    println(z)
+    println(status)
+    print(iter)
+    model_F = compose_model(Astd, b, cstd, xlb, xub, flag_sense, solver)
 
-    model = compose_model(model, m_origin, n_origin, Astd, b, cstd, xlb, xub, m, n)
-
-    return model
+    return model_F
 end
 
 function extract_data(model::JuMP.Model)
     A = full(JuMP.prepConstrMatrix(model))
+    c = JuMP.prepAffObjective(model)
     m, n = size(A)
 
     Astd = zeros(m,m+n)
@@ -74,10 +91,19 @@ function extract_data(model::JuMP.Model)
 
     xlb = copy(model.colLower)
     xub = copy(model.colUpper)
+
+    nxlb = zeros(n+m,1)
+    nxub = zeros(n+m,1)
+    nxlb[1:size(xlb)[1]] = xlb
+    nxlb[size(xlb)[1]+1 : n+m] = 0
+    nxub[1:size(xlb)[1]] = xub
+    nxub[size(xub)[1]+1 : n+m] = +Inf
+
+
     rowlb, rowub = JuMP.prepConstrBounds(model)
     solver = model.solver
 
-    for i in 1:n
+    for i in 1:m
         if rowlb[i] == -Inf
             b[i] = rowub[i]
         else
@@ -93,26 +119,41 @@ function extract_data(model::JuMP.Model)
         flag_sense = 1
     end
 
+    m, n = size(Astd)
 
-    return Astd, b, cstd, xlb, xub, solver, m, n, flag_sense
+    return Astd, b, cstd, nxlb, nxub, solver, m, n, flag_sense
 end
 
-function solve_LP(Astd, b, cstd, xlb, xub, solver, m, n)
-    model_LP = Model(solver=solver)
+function solve_LP(Astd, b, cstd, xlb, xub, solver)
+    m, n = size(Astd)
+    model_LP = Model(solver=GurobiSolver(OutputFlag = 0))
 
-    @variable(model_LP, xlb <= x[1:n] <= xub)
+    @variable(model_LP, xlb[i] <= x[i=1:n] <= xub[i])
     @constraints(model_LP, begin
     constrain[i=1:m], sum(Astd[i,j]*x[j] for j=1:n) == b[i]
     end)
 
-    @objective(model, :Max, sum(cstd[j]*x[j] for j=1:k))
+    @objective(model_LP, :Max, sum(cstd[j]*x[j] for j=1:n))
     status = solve(model_LP);
     return model_LP.colVal, model_LP.objVal, status
 end
 
-function compose_model(model, m_origin, n_origin, Astd, b, cstd, xlb, xub, m, n)
+function compose_model(Astd, b, cstd, xlb, xub, flag_sense, solver)
+    m, n = size(Astd)
 
-    #@addConstraint(model, begin
-    #cut[i = 1:(m-m_origin)], A)
+    model_F = Model(solver=solver)
 
+    @variable(model_F, xlb[i] <= x[i=1:n] <= xub[i])
+    @constraints(model_F, begin
+    constrain[i=1:m], sum(Astd[i,j]*x[j] for j=1:n) == b[i]
+    end)
+
+    if flag_sense == 1
+        cstd = -cstd
+        @objective(model_F, :Min, sum(cstd[j]*x[j] for j=1:n))
+    else
+        @objective(model_F, :Max, sum(cstd[j]*x[j] for j=1:n))
+    end
+
+    return model_F
 end
