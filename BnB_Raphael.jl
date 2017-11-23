@@ -1,5 +1,9 @@
 # ------------------------------------------------------------------
+# Includes para os outros arquivos do resto da turma
+include("funcoes_relax.jl")
 
+
+# Código original do Raphael
 mutable struct node
   level::Int
   model::JuMP.Model
