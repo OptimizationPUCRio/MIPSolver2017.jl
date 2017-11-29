@@ -4,7 +4,7 @@ include("funcoes_relax.jl")
 
 
 # Código original do Raphael
-mutable struct node
+type node
   level::Int
   model::JuMP.Model
 end
@@ -28,6 +28,43 @@ function convertSense!(m::JuMP.Model)
     m.objSense = :Max
     m.obj = -m.obj
   end
+end
+
+## Implements strong branching
+function strong(currentNode::node, binaryIndices::Vector{Int64}, n::Int)
+  candidatesToBr = rand(1:length(binaryIndices),n)
+  bounds = Array{Float64}(2,n)
+  for i = 1:n
+    leftModel = deepcopy(currentNode.model)
+    leftModel.colUpper[candidatesToBr[i]] = 0
+    leftModel.colLower[candidatesToBr[i]] = 0
+
+    rightModel = deepcopy(currentNode.model)
+    rightModel.colUpper[candidatesToBr[i]] = 1
+    rightModel.colLower[candidatesToBr[i]] = 1
+
+    leftModel.colCat[:] = :Cont
+    rightModel.colCat[:] = :Cont
+
+    solve(leftModel)
+    bounds[1,i] = rightModel.objVal
+    solve(rightModel)
+    bounds[2,i] = rightModel.objVal
+  end
+  indToBranch = ceil(Int,indmax(bounds)/2)
+
+  leftModel = deepcopy(currentNode.model)
+  leftModel.colUpper[indToBranch] = 0
+  leftModel.colLower[indToBranch] = 0
+
+  rightModel = deepcopy(currentNode.model)
+  rightModel.colUpper[indToBranch] = 1
+  rightModel.colLower[indToBranch] = 1
+
+  leftChild = node(currentNode.level+1, leftModel)
+  rightChild = node(currentNode.level+1, rightModel)
+
+  return leftChild, rightChild
 end
 
 ## Receives node and creates two children by setting a variable to 0 and 1 respectively
