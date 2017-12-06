@@ -20,13 +20,14 @@ include("branch_and_bound.jl")
                     travelling salesman problem (TSP).
 
 """
-function _grasp_tsp(m::JuMP.Model,maxiter::Int = 200, α::Float64 = 0.25)
+function _grasp_tsp(m::JuMP.Model,maxiter::Int = 200, α::Float64 = 0.25, max_iter_improv::Int= 200,max_improvs_aux::Int=200)
     num_variables = sum(m.colCat .== :Bin)
     num_nodes = Int(sqrt(num_variables))
     num_rlc = floor(num_nodes*α)
     num_rlc = Int(min(max(1,num_rlc),num_nodes))
     c = JuMP.prepAffObjective(m)
     range_nodes = 1:num_nodes
+    indVariable = collect(1:m.numCols)[m.colCat .== :Bin]
 
     tour = fill(-1, num_nodes)
 
@@ -58,25 +59,28 @@ function _grasp_tsp(m::JuMP.Model,maxiter::Int = 200, α::Float64 = 0.25)
     i = ind_aux[rand(1:size(ind_aux,1))]
 
     tour[itr] = i
-    rlc = m.objSense == :Max ? setdiff(sortperm(c[1 + num_nodes*(i-1):num_nodes*(i)], rev=true),tour)[1:num_rlc] :
-        setdiff(sortperm(c[1 + num_nodes*(i-1):num_nodes*(i)]),tour)[1:num_rlc]
-
+    rlc = m.objSense == :Max ? setdiff(sortperm(c[1 + num_nodes*(i-1):num_nodes*(i)], rev=true),tour):
+        setdiff(sortperm(c[1 + num_nodes*(i-1):num_nodes*(i)]),tour)
+    rlc = rlc[1:min(num_rlc,size(rlc,1))]
     ind = rlc[rand(1:size(rlc,1))]
     i = ind
     # remaining iteractions
-    for  itr= 2:num_nodes-1
+    for  itr= 2:num_nodes-2
         tour[itr] = i
-        rlc = m.objSense == :Max ? setdiff(sortperm(c[1 + num_nodes*(i-1):num_nodes*(i)], rev=true),tour)[1:num_rlc] :
-            setdiff(sortperm(c[1 + num_nodes*(i-1):num_nodes*(i)]),tour)[1:num_rlc]
+        rlc = m.objSense == :Max ? setdiff(sortperm(c[1 + num_nodes*(i-1):num_nodes*(i)], rev=true),tour) :
+            setdiff(sortperm(c[1 + num_nodes*(i-1):num_nodes*(i)]),tour)
+        rlc = rlc[1:min(num_rlc,size(rlc,1))]
         ind = rlc[rand(1:size(rlc,1))]
         i = ind
     end
+    tour[num_nodes-1] = i
+    i = setdiff(indVariable,tour)[1]
     tour[num_nodes] = i
 
     # check feasibility
     sol = feasible_solution._prep_solution(m,tour)
     # check feasability
-    indVariable = collect(1:m.numCols)[m.colCat .== :Bin]
+
     status,obval = feasible_solution._check_feasability_solution(m,sol,indVariable)
     if status == false
         # repair
@@ -84,8 +88,8 @@ function _grasp_tsp(m::JuMP.Model,maxiter::Int = 200, α::Float64 = 0.25)
     ## end first solution ##
     ## ajustments solution ##
     # Initialization
-    max_iter_improv = 20
-    max_improvs = num_nodes^2
+
+    max_improvs = max(num_nodes^2,max_improvs_aux)
     best_sol = m.colVal
     best_obj = obval
     improv_count = 0
@@ -130,11 +134,11 @@ function _prep_solution(m::JuMP.Model,tour)
     indVariable = collect(1:m.numCols)[m.colCat .== :Bin]
     row = tour[num_nodes]
     col = tour[1]
-    sol[(row-1)*7+col] = 1
+    sol[(row-1)*num_nodes+col] = 1
     for i = 1:num_nodes-1
         row = tour[i]
         col = tour[i+1]
-        sol[(row-1)*7+col] = 1
+        sol[(row-1)*num_nodes+col] = 1
     end
     return sol
 end
@@ -147,7 +151,7 @@ end
                     Linear Integer programim problem.
 
 """
-function grasp(m::JuMP.Model,flag_tsp::Bool = true, maxiter::Int = 200, α::Float64 = 0.25)
+function grasp(m::JuMP.Model,flag_tsp::Bool = true, maxiter::Int = 200, α::Float64 = 0.25, max_iter_improv::Int= 200,max_improvs_aux::Int=200)
     if flag_tsp
         status = _grasp_tsp(m::JuMP.Model,maxiter, α)
     else
