@@ -20,10 +20,11 @@ include("branch_and_bound.jl")
                     travelling salesman problem (TSP).
 
 """
-function _grasp_tsp(m::JuMP.Model,maxiter::Int = 200, α::Int = 0.25)
+function _grasp_tsp(m::JuMP.Model,maxiter::Int = 200, α::Float64 = 0.25)
     num_variables = sum(m.colCat .== :Bin)
     num_nodes = Int(sqrt(num_variables))
-    num_rlc = min(max(1,num_rlc),num_nodes)
+    num_rlc = floor(num_nodes*α)
+    num_rlc = Int(min(max(1,num_rlc),num_nodes))
     c = JuMP.prepAffObjective(m)
     range_nodes = 1:num_nodes
 
@@ -38,10 +39,10 @@ function _grasp_tsp(m::JuMP.Model,maxiter::Int = 200, α::Int = 0.25)
     end
     for i = num_variables
         if m.colUpper[i] == 0
-            row = floor(i/num_nodes)
-            col = i - num_nodes*row
+            row = Int(floor(i/num_nodes))
+            col = Int(i - num_nodes*row)
             if m.objSense == :Min
-                c[(row-1)*num_nodes+col] = maximum(c[1 + num_nodes*(row-1):num_nodes*row]) # so it wont be selected as best cadidate
+                c[row*num_nodes+col] = maximum(c[1 + num_nodes*row:num_nodes*(row+1)]) # so it wont be selected as best cadidate
             end
         end
     end
@@ -75,6 +76,7 @@ function _grasp_tsp(m::JuMP.Model,maxiter::Int = 200, α::Int = 0.25)
     # check feasibility
     sol = feasible_solution._prep_solution(m,tour)
     # check feasability
+    indVariable = collect(1:m.numCols)[m.colCat .== :Bin]
     status,obval = feasible_solution._check_feasability_solution(m,sol,indVariable)
     if status == false
         # repair
@@ -89,16 +91,16 @@ function _grasp_tsp(m::JuMP.Model,maxiter::Int = 200, α::Int = 0.25)
     improv_count = 0
     itr = 0
     # neighbourhood search
-    while iter <= min(max_iter_improv,max_improvs)
+    while itr <= min(max_iter_improv,max_improvs)
         # permutation
-        iter+=1
+        itr+=1
         inds =rand(1:num_nodes,2)
         tour_aux = deepcopy(tour)
         tour_aux[inds[1]] = tour[inds[2]]
         tour_aux[inds[2]] = tour[inds[1]]
 
         sol = feasible_solution._prep_solution(m,tour)
-        status,obval = feasible_solution._check_feasability_solution(m_aux,sol,indVariable)
+        status,obval = feasible_solution._check_feasability_solution(m,sol,indVariable)
         if status == true
             if m.objSense == :Max && obval > best_obj
                 best_sol = m.colVal
@@ -145,7 +147,7 @@ end
                     Linear Integer programim problem.
 
 """
-function grasp(m::JuMP.Model,flag_tsp::Bool = true, maxiter::Int = 200, α::Int = 0.25)
+function grasp(m::JuMP.Model,flag_tsp::Bool = true, maxiter::Int = 200, α::Float64 = 0.25)
     if flag_tsp
         status = _grasp_tsp(m::JuMP.Model,maxiter, α)
     else
