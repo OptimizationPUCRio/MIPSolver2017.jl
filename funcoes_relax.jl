@@ -1,3 +1,6 @@
+using JuMP
+
+
 function cutting_planes(model::JuMP.Model, VecBin::Vector{Int}, MaxIter::Int64 = 5)
     tol = 1e-5
 
