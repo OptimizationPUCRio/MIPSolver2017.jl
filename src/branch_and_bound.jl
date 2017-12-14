@@ -4,7 +4,7 @@ include("funcoes_relax.jl")
 
 
 # Código original do Raphael
-mutable struct node
+type node
   level::Int
   model::JuMP.Model
 end
@@ -19,6 +19,8 @@ function isBinary(model::JuMP.Model, binaryIndices::Vector{Int64})
   return false
 end
 
+
+
 ## Checks if model is max: if it is, converts to min
 function convertSense!(m::JuMP.Model)
   if m.objSense == :Max
@@ -29,6 +31,53 @@ function convertSense!(m::JuMP.Model)
     m.obj = -m.obj
   end
 end
+
+## Implements strong branching
+function strong(currentNode::node, binaryIndices::Vector{Int64}, amountOfBranches::Int64)
+
+  isZero = m.colVal[binaryIndices] .== 0
+  isOne  = m.colVal[binaryIndices] .== 1
+  fracIndices = find(isZero .+ isOne .== 0)
+
+  n = max(amountOfBranches, length(fracIndices))
+
+  candidatesToBr = rand(1:length(fracIndices),n)
+  bounds = Array{Float64}(2,n)
+  branchedVariables = Array{Int}(n)
+  for i = 1:n
+    branchedVariables[i] = fracIndices[candidatesToBr[i]]
+
+    leftModel = deepcopy(currentNode.model)
+    leftModel.colUpper[fracIndices[candidatesToBr[i]]] = 0
+    leftModel.colLower[fracIndices[candidatesToBr[i]]] = 0
+
+    rightModel = deepcopy(currentNode.model)
+    rightModel.colUpper[fracIndices[candidatesToBr[i]]] = 1
+    rightModel.colLower[fracIndices[candidatesToBr[i]]] = 1
+
+    solve(leftModel)
+    bounds[1,i] = rightModel.objVal
+    solve(rightModel)
+    bounds[2,i] = rightModel.objVal
+  end
+  indBestFrac = ceil(Int,indmax(bounds)/2)
+  indToBranch = branchedVariables[indBestFrac]
+
+  leftModel = deepcopy(currentNode.model)
+  leftModel.colUpper[indToBranch] = 0
+  leftModel.colLower[indToBranch] = 0
+
+  rightModel = deepcopy(currentNode.model)
+  rightModel.colUpper[indToBranch] = 1
+  rightModel.colLower[indToBranch] = 1
+
+  leftChild = node(currentNode.level+1, leftModel)
+  rightChild = node(currentNode.level+1, rightModel)
+
+  return leftChild, rightChild
+end
+
+
 
 ## Receives node and creates two children by setting a variable to 0 and 1 respectively
 function branch(currentNode::node, binaryIndices::Vector{Int64})
@@ -124,7 +173,7 @@ function solveMIP(m::JuMP.Model)
           end
         elseif nodes[1].model.objVal <= bestVal
           # Relaxed solution is not binary and should not be pruned by limit -- branch
-          (leftChild, rightChild) = branch(nodes[1], binaryIndices)
+          (leftChild, rightChild) = strong(nodes[1], binaryIndices, 5)
           branched = true
         end
       end
