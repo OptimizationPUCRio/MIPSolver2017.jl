@@ -176,7 +176,7 @@ function solveMIP(m::JuMP.Model)
           end
         elseif nodes[1].model.objVal <= bestVal
           # Relaxed solution is not binary and should not be pruned by limit -- branch
-          (leftChild, rightChild) = branch(nodes[1], binaryIndices)
+          (leftChild, rightChild) = strong(nodes[1], binaryIndices, 5)
           branched = true
         end
       end
