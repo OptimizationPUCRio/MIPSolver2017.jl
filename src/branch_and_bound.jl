@@ -34,37 +34,36 @@ function convertSense!(m::JuMP.Model)
   end
 end
 
-## Implements strong branching
+## Strong branching
 function strong(currentNode::node, binaryIndices::Vector{Int64}, amountOfBranches::Int64)
 
   isZero = currentNode.model.colVal[binaryIndices] .== 0
   isOne  = currentNode.model.colVal[binaryIndices] .== 1
-  fracIndices = find(isZero .+ isOne .== 0)
+  indFracIndices = find(isZero .+ isOne .== 0)
+  fracIndices = binaryIndices[indFracIndices]
 
-  n = max(amountOfBranches, length(fracIndices))
+  n = min(amountOfBranches, length(fracIndices))
 
-  candidatesToBr = rand(1:length(fracIndices),n)
+  indCandidatesToBranch = randperm(length(fracIndices))[1:n]
+  candidatesToBranch = fracIndices[indCandidatesToBranch]
   bounds = Array{Float64}(2,n)
-  branchedVariables = Array{Int}(n)
   for i = 1:n
-    branchedVariables[i] = fracIndices[candidatesToBr[i]]
-
     leftModel = deepcopy(currentNode.model)
-    leftModel.colUpper[fracIndices[candidatesToBr[i]]] = 0
-    leftModel.colLower[fracIndices[candidatesToBr[i]]] = 0
+    leftModel.colUpper[candidatesToBranch[i]] = 0
+    leftModel.colLower[candidatesToBranch[i]] = 0
 
     rightModel = deepcopy(currentNode.model)
-    rightModel.colUpper[fracIndices[candidatesToBr[i]]] = 1
-    rightModel.colLower[fracIndices[candidatesToBr[i]]] = 1
+    rightModel.colUpper[candidatesToBranch[i]] = 1
+    rightModel.colLower[candidatesToBranch[i]] = 1
 
     solve(leftModel)
-    bounds[1,i] = rightModel.objVal
+    bounds[1,i] = leftModel.objVal
     solve(rightModel)
     bounds[2,i] = rightModel.objVal
   end
 
   indBestFrac = ceil(Int,indmax(bounds)/2)
-  indToBranch = branchedVariables[indBestFrac]
+  indToBranch = candidatesToBranch[indBestFrac]
 
   leftModel = deepcopy(currentNode.model)
   leftModel.colUpper[indToBranch] = 0
@@ -80,10 +79,8 @@ function strong(currentNode::node, binaryIndices::Vector{Int64}, amountOfBranche
   return leftChild, rightChild
 end
 
-
-
-## Receives node and creates two children by setting a variable to 0 and 1 respectively
-function branch(currentNode::node, binaryIndices::Vector{Int64})
+## Most fractioned branching
+function fractioned(currentNode::node, binaryIndices::Vector{Int64})
 
   distance = abs(currentNode.model.colVal[binaryIndices] - 0.5)
   indFrac = indmin(distance)
@@ -99,6 +96,21 @@ function branch(currentNode::node, binaryIndices::Vector{Int64})
 
   leftChild = node(currentNode.level+1, leftModel)
   rightChild = node(currentNode.level+1, rightModel)
+
+  return leftChild, rightChild
+end
+
+## Receives node and creates two children by setting a variable to 0 and 1 respectively
+function branch(currentNode::node, binaryIndices::Vector{Int64}, method::Symbol)
+
+  if method == :fractioned
+    leftChild, rightChild = fractioned(currentNode, binaryIndices)
+  elseif method == :strong
+    amountOfBranches = 10
+    leftChild, rightChild = strong(currentNode, binaryIndices, amountOfBranches)
+  else
+    println("Error on branching method defition")
+  end
 
   return leftChild, rightChild
 end
@@ -177,6 +189,7 @@ function solveMIP(m::JuMP.Model)
         elseif nodes[1].model.objVal <= bestVal
           # Relaxed solution is not binary and should not be pruned by limit -- branch
           (leftChild, rightChild) = strong(nodes[1], binaryIndices, 5)
+          # (leftChild, rightChild) = branch(nodes[1], binaryIndices)
           branched = true
         end
       end
