@@ -100,6 +100,51 @@ function fractioned(currentNode::node, binaryIndices::Vector{Int64})
   return leftChild, rightChild
 end
 
+function pseudocost(currentNode::node, binaryIndices::Vector{Int64}, amountOfBranches::Int64)
+
+    isZero = currentNode.model.colVal[binaryIndices] .== 0
+    isOne  = currentNode.model.colVal[binaryIndices] .== 1
+    indFracIndices = find(isZero .+ isOne .== 0)
+    fracIndices = binaryIndices[indFracIndices]
+
+    n = min(amountOfBranches, length(fracIndices))
+
+    indCandidatesToBranch = randperm(length(fracIndices))[1:n]
+    candidatesToBranch = fracIndices[indCandidatesToBranch]
+    gains = Array{Float64}(2,n)
+    for i = 1:n
+
+      leftModel = deepcopy(currentNode.model)
+      leftModel.colUpper[candidatesToBranch[i]] = 0
+      leftModel.colLower[candidatesToBranch[i]] = 0
+
+      rightModel = deepcopy(currentNode.model)
+      rightModel.colUpper[candidatesToBranch[i]] = 1
+      rightModel.colLower[candidatesToBranch[i]] = 1
+
+      solve(leftModel)
+      gains[1,i] = (leftModel.objVal - currentNode.model.objVal)/(currentNode.model.colVal[candidatesToBranch[i]])
+      solve(rightModel)
+      gains[2,i] = (rightModel.objVal - currentNode.model.objVal)/(1 - currentNode.model.colVal[candidatesToBranch[i]])
+    end
+
+    indBestFrac = ceil(Int,indmax(bounds)/2)
+    indToBranch = candidatesToBranch[indBestFrac]
+
+    leftModel = deepcopy(currentNode.model)
+    leftModel.colUpper[indToBranch] = 0
+    leftModel.colLower[indToBranch] = 0
+
+    rightModel = deepcopy(currentNode.model)
+    rightModel.colUpper[indToBranch] = 1
+    rightModel.colLower[indToBranch] = 1
+
+    leftChild = node(currentNode.level+1, leftModel)
+    rightChild = node(currentNode.level+1, rightModel)
+
+    return leftChild, rightChild
+end
+
 ## Receives node and creates two children by setting a variable to 0 and 1 respectively
 function branch(currentNode::node, binaryIndices::Vector{Int64}, method::Symbol)
 
@@ -109,6 +154,9 @@ function branch(currentNode::node, binaryIndices::Vector{Int64}, method::Symbol)
     amountOfBranches = 10
     leftChild, rightChild = strong(currentNode, binaryIndices, amountOfBranches)
   else
+  elseif method == :pseudocost
+    amountOfBranches = 10
+    leftChild, rightChild = pseudocost(currentNode, binaryIndices, amountOfBranches)
     println("Error on branching method defition")
   end
 
