@@ -153,10 +153,10 @@ function branch(currentNode::node, binaryIndices::Vector{Int64}, method::Symbol)
   elseif method == :strong
     amountOfBranches = 10
     leftChild, rightChild = strong(currentNode, binaryIndices, amountOfBranches)
-  else
   elseif method == :pseudocost
     amountOfBranches = 10
     leftChild, rightChild = pseudocost(currentNode, binaryIndices, amountOfBranches)
+  else
     println("Error on branching method defition")
   end
 
@@ -236,7 +236,7 @@ function solveMIP(m::JuMP.Model)
           end
         elseif nodes[1].model.objVal <= bestVal
           # Relaxed solution is not binary and should not be pruned by limit -- branch
-          leftChild, rightChild = branch(nodes[1], binaryIndices, :strong)
+          leftChild, rightChild = branch(nodes[1], binaryIndices, :pseudocost)
           branched = true
         end
       end
