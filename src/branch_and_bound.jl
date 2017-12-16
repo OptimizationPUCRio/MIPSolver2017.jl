@@ -1,10 +1,12 @@
 # ------------------------------------------------------------------
 # Includes para os outros arquivos do resto da turma
-include("funcoes_relax.jl")
+#include("funcoes_relax.jl")
+#include("feasible_solution.jl")
+
 
 
 # Código original do Raphael
-type node
+mutable struct node
   level::Int
   model::JuMP.Model
 end
@@ -35,8 +37,8 @@ end
 ## Implements strong branching
 function strong(currentNode::node, binaryIndices::Vector{Int64}, amountOfBranches::Int64)
 
-  isZero = m.colVal[binaryIndices] .== 0
-  isOne  = m.colVal[binaryIndices] .== 1
+  isZero = currentNode.model.colVal[binaryIndices] .== 0
+  isOne  = currentNode.model.colVal[binaryIndices] .== 1
   fracIndices = find(isZero .+ isOne .== 0)
 
   n = max(amountOfBranches, length(fracIndices))
@@ -60,6 +62,7 @@ function strong(currentNode::node, binaryIndices::Vector{Int64}, amountOfBranche
     solve(rightModel)
     bounds[2,i] = rightModel.objVal
   end
+
   indBestFrac = ceil(Int,indmax(bounds)/2)
   indToBranch = branchedVariables[indBestFrac]
 

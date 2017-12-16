@@ -9,7 +9,6 @@
 module feasible_solution
 using JuMP
 
-include("branch_and_bound.jl")
 
 """
  Function Name   : Grasp generic mip problems
