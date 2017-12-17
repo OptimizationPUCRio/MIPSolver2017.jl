@@ -112,6 +112,7 @@ function pseudocost(currentNode::node, binaryIndices::Vector{Int64}, amountOfBra
     indCandidatesToBranch = randperm(length(fracIndices))[1:n]
     candidatesToBranch = fracIndices[indCandidatesToBranch]
     gains = Array{Float64}(2,n)
+    psc = Array{Float64}(2,n)
     for i = 1:n
 
       leftModel = deepcopy(currentNode.model)
@@ -128,7 +129,7 @@ function pseudocost(currentNode::node, binaryIndices::Vector{Int64}, amountOfBra
       gains[2,i] = (rightModel.objVal - currentNode.model.objVal)/(1 - currentNode.model.colVal[candidatesToBranch[i]])
     end
 
-    indBestFrac = ceil(Int,indmax(bounds)/2)
+    indBestFrac = ceil(Int,indmax(gains)/2)
     indToBranch = candidatesToBranch[indBestFrac]
 
     leftModel = deepcopy(currentNode.model)
@@ -151,10 +152,10 @@ function branch(currentNode::node, binaryIndices::Vector{Int64}, method::Symbol)
   if method == :fractioned
     leftChild, rightChild = fractioned(currentNode, binaryIndices)
   elseif method == :strong
-    amountOfBranches = 10
+    amountOfBranches = 50
     leftChild, rightChild = strong(currentNode, binaryIndices, amountOfBranches)
   elseif method == :pseudocost
-    amountOfBranches = 10
+    amountOfBranches = 50
     leftChild, rightChild = pseudocost(currentNode, binaryIndices, amountOfBranches)
   else
     println("Error on branching method defition")
@@ -219,6 +220,7 @@ function solveMIP(m::JuMP.Model)
     if iter%10 == 0
       traverse = (-1)*traverse
     end
+
     branched = false
     # Check node lower bound. If greater than current best UB, prune by limit
     if nodes[1].model.objVal <= bestVal
@@ -236,7 +238,7 @@ function solveMIP(m::JuMP.Model)
           end
         elseif nodes[1].model.objVal <= bestVal
           # Relaxed solution is not binary and should not be pruned by limit -- branch
-          leftChild, rightChild = branch(nodes[1], binaryIndices, :pseudocost)
+          leftChild, rightChild = branch(nodes[1], binaryIndices, :fractioned)
           branched = true
         end
       end
@@ -246,12 +248,16 @@ function solveMIP(m::JuMP.Model)
     if branched == true
       if traverse == 1 # breadth -- insert children at the end of the list
         push!(nodes, leftChild, rightChild)
+        lastNodeLevel = nodes[1].level
+        deleteat!(nodes, 1)
       else # depth -- insert children at the beginning of the list
+        lastNodeLevel = nodes[1].level
+        deleteat!(nodes, 1)
         unshift!(nodes, leftChild, rightChild)
       end
+    else
+      deleteat!(nodes, 1)
     end
-    lastNodeLevel = nodes[1].level
-    deleteat!(nodes, 1)
     iter+=1
 
     if iter == 1 || iter%10 == 0
