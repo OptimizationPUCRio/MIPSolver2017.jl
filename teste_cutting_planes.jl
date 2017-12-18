@@ -1,12 +1,19 @@
 using JuMP, Gurobi
 solver = GurobiSolver()
-m = Model(solver = solver)
+model = Model(solver = solver)
 
-@variable(m, x[i=1:3] >= 0, Bin)
-@constraint(m, 6*x[1] + 5*x[2] + 5*x[3] <= 10)
+@variable(model, y >= 0, Int)
+@variable(model, x >= 0)
 
-@objective(m, Max, 6*x[1] + 4*x[2] + 3*x[3])
-solve(m)
+@constraints(model, begin
+7y - 2x <= 14
+x <= 3
+2y - 2x <= 3
+end)
+
+@objective(model, :Max, 4y - x)
+
+solve(model)
 
 
-model = cutting_planes(m, [1;2;3], 50)
+model = cutting_planes(model, [1], 50)
