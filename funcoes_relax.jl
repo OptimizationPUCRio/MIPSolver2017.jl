@@ -5,17 +5,24 @@ function cutting_planes(model::JuMP.Model, VecBin::Vector{Int}, MaxIter::Int64 =
 
     iter = 1
     convergence = -2 #not finished
-    H = zeros(1,4+n) #Iterations history
     X = 0
     z = 0
     status = ""
-
+    println(" VecBin ", VecBin)
     while convergence == -2
         X, z, status = solve_LP(Astd, b, cstd, xlb, xub, solver)
+        println("Astd = ", Astd)
+        println("b = ", b)
+        println("cstd = ", cstd)
+        println("xlb = ", xlb)
+        println("xub = ", xub)
+        println("x = ", X)
+        println("m = " , m)
+        println("n = " , n)
 
         # Finding fractional variable address
         j = find(min.(X[1:n]-floor.(X[1:n]),ceil.(X[1:n])-X[1:n]).>tol)
-
+        println("j fracionario = ", j)
         # Removing index from continous variables
         tmp = min(size(VecBin)[1], size(j)[1])
         tmp_ind = []
@@ -31,6 +38,7 @@ function cutting_planes(model::JuMP.Model, VecBin::Vector{Int}, MaxIter::Int64 =
             end
         end
         j = tmp_ind
+        println("j binario e fracionario = ", j)
 
         #Test convergence
         if length(j) == 0
@@ -42,35 +50,64 @@ function cutting_planes(model::JuMP.Model, VecBin::Vector{Int}, MaxIter::Int64 =
 
             convergence  = -1
         else
-            j = j[1] #pick a fractional variable address (the first one)
-
+            j = j[1] #pick a fractional and binary variable address (the first one)
+            print("j escolhido = ", j)
             #Calculating Chvatal-Gomory coefficients
-            NBas = find(X.<=tol) #finding nonbasic variable addresses
-            Bas = deleteat!(collect(1:n), NBas) #finding basic variable addresses
-            i = find(Bas.==j) # finding dictionary line related to the fractional variable
+            NBas = find(X .<= tol)
+            Bas = deleteat!(collect(1:n), NBas)
 
-            D=((Astd[:,Bas]'*Astd[:,Bas])\Astd[:,Bas]')*Astd[:,NBas]
-            q0 =  floor.(X[j])
-            qi = zeros(1,n)
-            qi[j] = 1
-            qi[NBas] = floor.(D[i,:])
+            # u = Linha do dicionario correspondente a variavel x_j
+            u = find(Bas.== j)
 
-            #Adding the cut as new a constraint into the problem stand. form
-            Astd = [[Astd zeros(m,1)]; [qi 1]] #new constrait and new slack
-            b = [b;q0]
-            cstd = [cstd;0]
+            DB = X[Bas]
+            DN = ((Astd[:,Bas]'*Astd[:,Bas])\Astd[:,Bas]')*Astd[:,NBas]
+
+            a0 = X[Bas]
+            a = zeros(size(Bas)[1],n)
+
+            a[:,NBas] = DN
+            for i = 1:size(Bas)[1]
+              a[i,Bas[i]] = 1
+            end
+            a[find(abs.(a) .< tol)] = 0
+
+            N1 = intersect(deleteat!(copy(VecBin),j),NBas)
+            N2 = intersect(deleteat!(collect(1:n), VecBin),NBas)
+
+            f0 = a0[u] - floor.(a0[u])
+            f0 = f0[1]
+
+
+            f = a[u,union(N1,N2)] - floor.(a[u,union(N1,N2)])
+
+            A_cut = zeros(1,n)
+            A_cut[intersect(find(f .<= f0), N1)] = f[intersect(find(f .<= f0), N1)]
+            A_cut[intersect(find(f .> f0), N1)] = f0*(1-f[intersect(find(f .> f0), N1)])/(1-f0)
+            A_cut[intersect(find(a[u,:] .> 0), N2)] = a[u,intersect(find(a[u,:] .> 0), N2)]
+            A_cut[intersect(find(a[u,:] .< 0), N2)] = f0/(1-f0) * a[u,intersect(find(a[u,:] .< 0), N2)]
+
+            b_cut = f0
+
+            Astd = [[Astd zeros(m,1)]; [A_cut -1]]
+            b = [b ; b_cut]
+
+            cstd = [cstd ; 0]
             xlb = [xlb; 0]
             xub = [xub; +Inf]
             m+=1
             n+=1
             iter+=1
+            println(" ")
+            println(" ")
         end
     end
+    println(" ")
+    println(" ")
 
-    println(X)
-    println(z)
-    println(status)
-    print(iter)
+    println("X = ", X)
+    println("Z = ", z)
+    println("Status = ", status)
+    print("Iter = " , iter)
     model_F = compose_model(Astd, b, cstd, xlb, xub, flag_sense, solver, X, z, status)
 
     return model_F
@@ -83,7 +120,7 @@ function extract_data(model::JuMP.Model)
 
     Astd = zeros(m,m+n)
     cstd = zeros(m+n)
-    b = zeros(n,1)
+    b = zeros(m,1)
 
     Astd = [A eye(m)]
     cstd = [c ; zeros(m)]
@@ -100,7 +137,6 @@ function extract_data(model::JuMP.Model)
 
 
     rowlb, rowub = JuMP.prepConstrBounds(model)
-    solver = model.solver
 
     for i in 1:m
         if rowlb[i] == -Inf
@@ -119,6 +155,7 @@ function extract_data(model::JuMP.Model)
     end
 
     m, n = size(Astd)
+    solver = model.solver
 
     return Astd, b, cstd, nxlb, nxub, solver, m, n, flag_sense
 end
