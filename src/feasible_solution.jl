@@ -9,6 +9,8 @@
 module feasible_solution
 using JuMP
 
+include("branch_and_bound.jl")
+using Combinatorics
 
 """
  Function Name   : Grasp generic mip problems
@@ -58,22 +60,34 @@ function _grasp_tsp(m::JuMP.Model,maxiter::Int = 200, α::Float64 = 0.25, max_it
     i = ind_aux[rand(1:size(ind_aux,1))]
 
     tour[itr] = i
-    rlc = m.objSense == :Max ? setdiff(sortperm(c[1 + num_nodes*(i-1):num_nodes*(i)], rev=true),tour):
-        setdiff(sortperm(c[1 + num_nodes*(i-1):num_nodes*(i)]),tour)
-    rlc = rlc[1:min(num_rlc,size(rlc,1))]
-    ind = rlc[rand(1:size(rlc,1))]
-    i = ind
+
     # remaining iteractions
-    for  itr= 2:num_nodes-2
-        tour[itr] = i
-        rlc = m.objSense == :Max ? setdiff(sortperm(c[1 + num_nodes*(i-1):num_nodes*(i)], rev=true),tour) :
-            setdiff(sortperm(c[1 + num_nodes*(i-1):num_nodes*(i)]),tour)
+    proh = Int.(-1*ones(num_nodes,num_nodes))
+    itr+=1
+    while itr <=num_nodes-1
+        rlc = m.objSense == :Max ? setdiff(setdiff(sortperm(c[1 + num_nodes*(i-1):num_nodes*(i)], rev=true),tour), proh[itr,:]):
+            setdiff(setdiff(sortperm(c[1 + num_nodes*(i-1):num_nodes*(i)]),tour), proh[itr,:])
         rlc = rlc[1:min(num_rlc,size(rlc,1))]
-        ind = rlc[rand(1:size(rlc,1))]
-        i = ind
+        if size(rlc,1) == 0
+            itr-=1
+            proh[itr,tour[itr]] = tour[itr]
+            proh[itr+1,:] .=  Int.(-1*ones(num_nodes))
+            tour[itr] = -1
+        else
+            ind = rlc[rand(1:size(rlc,1))]
+            i = ind
+            tour[itr] = i
+            if size(setdiff(collect(1:num_nodes),tour),1) == 0
+                proh[itr,tour[itr]] = tour[itr]
+                proh[itr+1,:] .=  Int.(-1*ones(num_nodes))
+                tour[itr] = -1
+                itr-=1
+            else
+                itr+=1
+            end
+        end
     end
-    tour[num_nodes-1] = i
-    i = setdiff(indVariable,tour)[1]
+    i = setdiff(collect(1:num_nodes),tour)[1]
     tour[num_nodes] = i
 
     # check feasibility
@@ -87,35 +101,52 @@ function _grasp_tsp(m::JuMP.Model,maxiter::Int = 200, α::Float64 = 0.25, max_it
     ## end first solution ##
     ## ajustments solution ##
     # Initialization
-
+    m_aux = deepcopy(m)
     max_improvs = max(num_nodes^2,max_improvs_aux)
-    best_sol = m.colVal
-    best_obj = obval
-    improv_count = 0
-    itr = 0
-    # neighbourhood search
-    while itr <= min(max_iter_improv,max_improvs)
-        # permutation
-        itr+=1
-        inds =rand(1:num_nodes,2)
-        tour_aux = deepcopy(tour)
-        tour_aux[inds[1]] = tour[inds[2]]
-        tour_aux[inds[2]] = tour[inds[1]]
+    best_sol = deepcopy(m.colVal)
+    best_obj = deepcopy(obval)
+    itr_improv = 0
+    itr = 1
+    neighb_param1 = 2
+    neighb_param2 = 1  # shift
 
-        sol = feasible_solution._prep_solution(m,tour)
-        status,obval = feasible_solution._check_feasability_solution(m,sol,indVariable)
+    neighb = collect(combinations(1:num_nodes,neighb_param1))
+    while itr_improv <= max_iter_improv
+        # permutation
+        inds = neighb[itr] #rand(1:num_nodes,2) collect(1:5)
+        tour_aux = deepcopy(tour)
+        tour_aux2 = deepcopy(tour[inds])
+        tour_aux[inds] = circshift(tour_aux2,neighb_param2)
+
+        # tour_aux[inds[1]] = tour[inds[2]]
+        # tour_aux[inds[2]] = tour[inds[1]]
+
+        sol = feasible_solution._prep_solution(m_aux,tour_aux)
+        status,obval = feasible_solution._check_feasability_solution(m_aux,sol,indVariable)
         if status == true
             if m.objSense == :Max && obval > best_obj
-                best_sol = m.colVal
-                best_obj = obval
+                best_sol = deepcopy(m_aux.colVal)
+                best_obj = deepcopy(obval)
             elseif  m.objSense == :Min && obval < best_obj
-                best_sol = m.colVal
-                best_obj = obval
+                best_sol = deepcopy(m_aux.colVal)
+                best_obj = deepcopy(obval)
             end
         end
+        if itr == size(neighb,1)
+            if neighb_param1 == num_nodes
+                neighb_param1 = 1
+                neighb_param2 +=1
+            end
+            itr = 0
+            neighb_param1 +=1
+            neighb = collect(combinations(1:num_nodes,neighb_param1))
+        end
+        itr+=1
+        itr_improv+=1
     end
+
     m.colVal = best_sol
-    m.objVal = obval
+    m.objVal = best_obj
     # return status
     return :SubOptimal
 end
