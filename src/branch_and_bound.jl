@@ -1,8 +1,7 @@
 # ------------------------------------------------------------------
 # Includes para os outros arquivos do resto da turma
 #include("funcoes_relax.jl")
-#include("feasible_solution.jl")
-
+include("feasible_solution.jl")
 
 
 # Código original do Raphael
@@ -168,7 +167,7 @@ function obtainBoundList(nodeList)
 end
 
 ## Receives a mixed binary linear JuMP model
-function solveMIP(m::JuMP.Model)
+function solveMIP(m::JuMP.Model; branchMethod = :strong, traverseMethod = :mixed, boolgrasptsp::Bool = false)
 
   tic()
 
@@ -187,6 +186,20 @@ function solveMIP(m::JuMP.Model)
   binaryIndices = find(m.colCat .== :Bin)
   binarySolutions = 0
 
+  flagOpt = 0 # flag that indicates if a viable solution has been found
+
+  # Solve using initial heuristic (GRASP)
+  if boolgrasptsp
+    m_aux = deepcopy(m)
+    status = feasible_solution.grasp(m_aux,true,200,0.03,10000000)
+    if status == :SubOptimal && m_aux.objVal < bestVal
+      bestVal = m_aux.objVal
+      m.colVal = m_aux.colVal
+      binarySolutions += 1
+      flagOpt+=1
+    end
+  end
+
   # Solve linear relaxation
   m.colCat[:] = :Cont
   status = solve(m)
@@ -202,10 +215,14 @@ function solveMIP(m::JuMP.Model)
   end
 
   iter = 1 # number of visited nodes
-  flagOpt = 0 # flag that indicates if a viable solution has been found
   branched = false # flag that indicates if a branch has occurred in this iteration
-  traverse = 1 # 1 for breadth, -1 for depth
   tol = 0.01 # tolerance (%)
+
+  if traverseMethod == :depth
+    traverse = -1
+  else
+    traverse = 1
+  end
 
   # Initializing pseudo-cost matrix
   pscMatrix = [ones(length(binaryIndices)) zeros(length(binaryIndices))]
@@ -215,7 +232,7 @@ function solveMIP(m::JuMP.Model)
   while !isempty(nodes) && abs((bestVal - bestBound)/bestVal) > tol && (time_ns()-time0)/1e9 < 600
 
     # Change traverse method every 10 iterations for better bound discovery
-    if iter%10 == 0
+    if traverseMethod == :mixed && iter%10 == 0
       traverse = (-1)*traverse
     end
 
@@ -236,7 +253,7 @@ function solveMIP(m::JuMP.Model)
           end
         elseif nodes[1].model.objVal <= bestVal
           # Relaxed solution is not binary and should not be pruned by limit -- branch
-          leftChild, rightChild, pscMatrix = branch(nodes[1], binaryIndices, :hybrid; pscMatrix = pscMatrix)
+          leftChild, rightChild, pscMatrix = branch(nodes[1], binaryIndices, branchMethod; pscMatrix = pscMatrix)
           branched = true
         end
       end
@@ -285,6 +302,8 @@ function solveMIP(m::JuMP.Model)
   m.ext[:solutions] = binarySolutions
   t = toc()
   m.ext[:time] = t
+
+  println(string("Nodes: ",m.ext[:nodes]))
 
   return m.ext[:status]
 end
