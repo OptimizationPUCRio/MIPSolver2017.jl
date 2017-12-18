@@ -1,6 +1,8 @@
 # ------------------------------------------------------------------
 # Includes para os outros arquivos do resto da turma
-include("funcoes_relax.jl")
+#include("funcoes_relax.jl")
+#include("feasible_solution.jl")
+
 
 
 # Código original do Raphael
@@ -19,6 +21,8 @@ function isBinary(model::JuMP.Model, binaryIndices::Vector{Int64})
   return false
 end
 
+
+
 ## Checks if model is max: if it is, converts to min
 function convertSense!(m::JuMP.Model)
   if m.objSense == :Max
@@ -30,8 +34,53 @@ function convertSense!(m::JuMP.Model)
   end
 end
 
-## Receives node and creates two children by setting a variable to 0 and 1 respectively
-function branch(currentNode::node, binaryIndices::Vector{Int64})
+## Strong branching
+function strong(currentNode::node, binaryIndices::Vector{Int64}, amountOfBranches::Int64)
+
+  isZero = currentNode.model.colVal[binaryIndices] .== 0
+  isOne  = currentNode.model.colVal[binaryIndices] .== 1
+  indFracIndices = find(isZero .+ isOne .== 0)
+  fracIndices = binaryIndices[indFracIndices]
+
+  n = min(amountOfBranches, length(fracIndices))
+
+  indCandidatesToBranch = randperm(length(fracIndices))[1:n]
+  candidatesToBranch = fracIndices[indCandidatesToBranch]
+  bounds = Array{Float64}(2,n)
+  for i = 1:n
+    leftModel = deepcopy(currentNode.model)
+    leftModel.colUpper[candidatesToBranch[i]] = 0
+    leftModel.colLower[candidatesToBranch[i]] = 0
+
+    rightModel = deepcopy(currentNode.model)
+    rightModel.colUpper[candidatesToBranch[i]] = 1
+    rightModel.colLower[candidatesToBranch[i]] = 1
+
+    solve(leftModel)
+    bounds[1,i] = leftModel.objVal
+    solve(rightModel)
+    bounds[2,i] = rightModel.objVal
+  end
+
+  indBestFrac = ceil(Int,indmax(bounds)/2)
+  indToBranch = candidatesToBranch[indBestFrac]
+
+  leftModel = deepcopy(currentNode.model)
+  leftModel.colUpper[indToBranch] = 0
+  leftModel.colLower[indToBranch] = 0
+
+  rightModel = deepcopy(currentNode.model)
+  rightModel.colUpper[indToBranch] = 1
+  rightModel.colLower[indToBranch] = 1
+
+  leftChild = node(currentNode.level+1, leftModel)
+  rightChild = node(currentNode.level+1, rightModel)
+
+  return leftChild, rightChild
+end
+
+## Most fractioned branching
+function fractioned(currentNode::node, binaryIndices::Vector{Int64})
 
   distance = abs(currentNode.model.colVal[binaryIndices] - 0.5)
   indFrac = indmin(distance)
@@ -47,6 +96,70 @@ function branch(currentNode::node, binaryIndices::Vector{Int64})
 
   leftChild = node(currentNode.level+1, leftModel)
   rightChild = node(currentNode.level+1, rightModel)
+
+  return leftChild, rightChild
+end
+
+function pseudocost(currentNode::node, binaryIndices::Vector{Int64}, amountOfBranches::Int64)
+
+    isZero = currentNode.model.colVal[binaryIndices] .== 0
+    isOne  = currentNode.model.colVal[binaryIndices] .== 1
+    indFracIndices = find(isZero .+ isOne .== 0)
+    fracIndices = binaryIndices[indFracIndices]
+
+    n = min(amountOfBranches, length(fracIndices))
+
+    indCandidatesToBranch = randperm(length(fracIndices))[1:n]
+    candidatesToBranch = fracIndices[indCandidatesToBranch]
+    gains = Array{Float64}(2,n)
+    psc = Array{Float64}(2,n)
+    for i = 1:n
+
+      leftModel = deepcopy(currentNode.model)
+      leftModel.colUpper[candidatesToBranch[i]] = 0
+      leftModel.colLower[candidatesToBranch[i]] = 0
+
+      rightModel = deepcopy(currentNode.model)
+      rightModel.colUpper[candidatesToBranch[i]] = 1
+      rightModel.colLower[candidatesToBranch[i]] = 1
+
+      solve(leftModel)
+      gains[1,i] = (leftModel.objVal - currentNode.model.objVal)/(currentNode.model.colVal[candidatesToBranch[i]])
+      solve(rightModel)
+      gains[2,i] = (rightModel.objVal - currentNode.model.objVal)/(1 - currentNode.model.colVal[candidatesToBranch[i]])
+    end
+
+    indBestFrac = ceil(Int,indmax(gains)/2)
+    indToBranch = candidatesToBranch[indBestFrac]
+
+    leftModel = deepcopy(currentNode.model)
+    leftModel.colUpper[indToBranch] = 0
+    leftModel.colLower[indToBranch] = 0
+
+    rightModel = deepcopy(currentNode.model)
+    rightModel.colUpper[indToBranch] = 1
+    rightModel.colLower[indToBranch] = 1
+
+    leftChild = node(currentNode.level+1, leftModel)
+    rightChild = node(currentNode.level+1, rightModel)
+
+    return leftChild, rightChild
+end
+
+## Receives node and creates two children by setting a variable to 0 and 1 respectively
+function branch(currentNode::node, binaryIndices::Vector{Int64}, method::Symbol)
+
+  if method == :fractioned
+    leftChild, rightChild = fractioned(currentNode, binaryIndices)
+  elseif method == :strong
+    amountOfBranches = 50
+    leftChild, rightChild = strong(currentNode, binaryIndices, amountOfBranches)
+  elseif method == :pseudocost
+    amountOfBranches = 50
+    leftChild, rightChild = pseudocost(currentNode, binaryIndices, amountOfBranches)
+  else
+    println("Error on branching method defition")
+  end
 
   return leftChild, rightChild
 end
@@ -107,6 +220,7 @@ function solveMIP(m::JuMP.Model)
     if iter%10 == 0
       traverse = (-1)*traverse
     end
+
     branched = false
     # Check node lower bound. If greater than current best UB, prune by limit
     if nodes[1].model.objVal <= bestVal
@@ -124,7 +238,7 @@ function solveMIP(m::JuMP.Model)
           end
         elseif nodes[1].model.objVal <= bestVal
           # Relaxed solution is not binary and should not be pruned by limit -- branch
-          (leftChild, rightChild) = branch(nodes[1], binaryIndices)
+          leftChild, rightChild = branch(nodes[1], binaryIndices, :fractioned)
           branched = true
         end
       end
@@ -134,12 +248,16 @@ function solveMIP(m::JuMP.Model)
     if branched == true
       if traverse == 1 # breadth -- insert children at the end of the list
         push!(nodes, leftChild, rightChild)
+        lastNodeLevel = nodes[1].level
+        deleteat!(nodes, 1)
       else # depth -- insert children at the beginning of the list
+        lastNodeLevel = nodes[1].level
+        deleteat!(nodes, 1)
         unshift!(nodes, leftChild, rightChild)
       end
+    else
+      deleteat!(nodes, 1)
     end
-    lastNodeLevel = nodes[1].level
-    deleteat!(nodes, 1)
     iter+=1
 
     if iter == 1 || iter%10 == 0
