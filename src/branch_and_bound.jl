@@ -1,8 +1,8 @@
 # ------------------------------------------------------------------
 # Includes para os outros arquivos do resto da turma
 #include("funcoes_relax.jl")
-#include("feasible_solution.jl")
-
+include("feasible_solution.jl")
+using feasible_solution
 
 
 # Código original do Raphael
@@ -174,9 +174,12 @@ function obtainBoundList(nodeList)
 end
 
 ## Receives a mixed binary linear JuMP model
-function solveMIP(m::JuMP.Model)
+function solveMIP(m::JuMP.Model;boolgrasptsp = true)
 
   tic()
+
+  # Initialization
+  flagOpt = 0 # flag that indicates if a viable solution has been found
 
   # Check if model is max; if it is, converts to min
   flagConverted = 0
@@ -193,6 +196,20 @@ function solveMIP(m::JuMP.Model)
   binaryIndices = find(m.colCat .== :Bin)
   binarySolutions = 0
 
+  # Solve using initial heuristic (GRASP)
+  if boolgrasptsp
+        m_aux = deepcopy(m)
+        tic()
+        status = feasible_solution.grasp(m_aux,true,200,0.03,10000000)
+        toc()
+        if status == :SubOptimal && m_aux.objVal < bestVal
+            bestVal = m_aux.objVal
+            m.colVal = m_aux.colVal
+            binarySolutions += 1
+            flagOpt+=1
+        end
+  end
+
   # Solve linear relaxation
   m.colCat[:] = :Cont
   status = solve(m)
@@ -201,19 +218,19 @@ function solveMIP(m::JuMP.Model)
     # Solution of the relaxed problem is binary: optimal solution
     bestBound = m.objVal
     bestVal = m.objVal
-    binarySolutions = 1
+    binarySolutions += 1
   else
     push!(nodes, node(0, m)) # Add root to branch and bound tree
     lastNodeLevel = 0
   end
 
   iter = 1 # number of visited nodes
-  flagOpt = 0 # flag that indicates if a viable solution has been found
+  # OBS.: flagOpt changed upstream (initail heuristic added)
   branched = false # flag that indicates if a branch has occurred in this iteration
   traverse = 1 # 1 for breadth, -1 for depth
   tol = 0.01 # tolerance (%)
   time0 = time_ns()
-
+  println("stop ",(bestVal - bestBound)/bestVal > tol)
   while !isempty(nodes) && abs((bestVal - bestBound)/bestVal) > tol && (time_ns()-time0)/1e9 < 600
 
     # Change traverse method every 10 iterations for better bound discovery

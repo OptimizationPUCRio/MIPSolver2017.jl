@@ -9,7 +9,7 @@
 module feasible_solution
 using JuMP
 
-include("branch_and_bound.jl")
+include("feasibility_pump.jl")
 using Combinatorics
 
 """
@@ -21,7 +21,7 @@ using Combinatorics
                     travelling salesman problem (TSP).
 
 """
-function _grasp_tsp(m::JuMP.Model,maxiter::Int = 200, α::Float64 = 0.25, max_iter_improv::Int= 200,max_improvs_aux::Int=200)
+function _grasp_tsp(m::JuMP.Model,maxtime::Int = 200, α::Float64 = 0.25, max_iter_improv::Int= 200,max_improvs_aux::Int=200)
     num_variables = sum(m.colCat .== :Bin)
     num_nodes = Int(sqrt(num_variables))
     num_rlc = floor(num_nodes*α)
@@ -62,9 +62,19 @@ function _grasp_tsp(m::JuMP.Model,maxiter::Int = 200, α::Float64 = 0.25, max_it
     tour[itr] = i
 
     # remaining iteractions
+    tic()
+    time = 0.0
     proh = Int.(-1*ones(num_nodes,num_nodes))
     itr+=1
     while itr <=num_nodes-1
+        if itr == 1
+            lc = setdiff(1:size(ind_aux,1),proh[itr,:])
+            if size(lc,1) == 0
+                return :Infeasible
+            end
+            i = ind_aux[rand()]
+            tour[itr] = i
+        end
         rlc = m.objSense == :Max ? setdiff(setdiff(sortperm(c[1 + num_nodes*(i-1):num_nodes*(i)], rev=true),tour), proh[itr,:]):
             setdiff(setdiff(sortperm(c[1 + num_nodes*(i-1):num_nodes*(i)]),tour), proh[itr,:])
         rlc = rlc[1:min(num_rlc,size(rlc,1))]
@@ -86,6 +96,11 @@ function _grasp_tsp(m::JuMP.Model,maxiter::Int = 200, α::Float64 = 0.25, max_it
                 itr+=1
             end
         end
+        time += toc()
+        if time > maxtime
+            return :UserLimit
+        end
+        tic()
     end
     i = setdiff(collect(1:num_nodes),tour)[1]
     tour[num_nodes] = i
@@ -298,14 +313,12 @@ function _check_feasability_variable(model::JuMP.Model)
 end
 
 
-"""
-Function Name   : Feasability Pump
-"""
-function feasability_pump()
-
-end
-
-
+# """
+# Function Name   : Feasability Pump
+# """
+# function feasability_pump()
+#
+# end
 
 
 
