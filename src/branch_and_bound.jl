@@ -21,8 +21,6 @@ function isBinary(model::JuMP.Model, binaryIndices::Vector{Int64})
   return false
 end
 
-
-
 ## Checks if model is max: if it is, converts to min
 function convertSense!(m::JuMP.Model)
   if m.objSense == :Max
@@ -34,8 +32,9 @@ function convertSense!(m::JuMP.Model)
   end
 end
 
-## Strong branching
-function strong(currentNode::node, binaryIndices::Vector{Int64}, amountOfBranches::Int64)
+## Strong branching -- if amount of branches == Inf --> full strong branching
+function strong(currentNode::node, binaryIndices::Vector{Int64}, amountOfBranches::Int64,
+                pscMatrix::Matrix{Float64})
 
   isZero = currentNode.model.colVal[binaryIndices] .== 0
   isOne  = currentNode.model.colVal[binaryIndices] .== 1
@@ -73,16 +72,22 @@ function strong(currentNode::node, binaryIndices::Vector{Int64}, amountOfBranche
   rightModel.colUpper[indToBranch] = 1
   rightModel.colLower[indToBranch] = 1
 
+  leftDelta = abs(currentNode.model.objVal - leftModel.objVal)/currentNode.model.colVal[indToBranch]
+  rightDelta = abs(currentNode.model.objVal - rightModel.objVal)/(1-currentNode.model.colVal[indToBranch])
+
+  pscMatrix[indBestFrac, 2]+=1
+  pscMatrix[indBestFrac, 1] = (pscMatrix[indBestFrac,1] + ((leftDelta + rightDelta)/2))/pscMatrix[indBestFrac,2]
+
   leftChild = node(currentNode.level+1, leftModel)
   rightChild = node(currentNode.level+1, rightModel)
 
-  return leftChild, rightChild
+  return leftChild, rightChild, pscMatrix
 end
 
-## Most fractioned branching
-function fractioned(currentNode::node, binaryIndices::Vector{Int64})
+## Most fractional branching
+function fractional(currentNode::node, binaryIndices::Vector{Int64})
 
-  distance = abs(currentNode.model.colVal[binaryIndices] - 0.5)
+  distance = abs.(currentNode.model.colVal[binaryIndices] - 0.5)
   indFrac = indmin(distance)
   indToSet = binaryIndices[indFrac]
 
@@ -100,37 +105,16 @@ function fractioned(currentNode::node, binaryIndices::Vector{Int64})
   return leftChild, rightChild
 end
 
-function pseudocost(currentNode::node, binaryIndices::Vector{Int64}, amountOfBranches::Int64)
+## Pseudo-cost branching
+function pseudocost(currentNode::node, binaryIndices::Vector{Int64}, pscMatrix::Matrix{Float64})
 
     isZero = currentNode.model.colVal[binaryIndices] .== 0
     isOne  = currentNode.model.colVal[binaryIndices] .== 1
     indFracIndices = find(isZero .+ isOne .== 0)
     fracIndices = binaryIndices[indFracIndices]
 
-    n = min(amountOfBranches, length(fracIndices))
-
-    indCandidatesToBranch = randperm(length(fracIndices))[1:n]
-    candidatesToBranch = fracIndices[indCandidatesToBranch]
-    gains = Array{Float64}(2,n)
-    psc = Array{Float64}(2,n)
-    for i = 1:n
-
-      leftModel = deepcopy(currentNode.model)
-      leftModel.colUpper[candidatesToBranch[i]] = 0
-      leftModel.colLower[candidatesToBranch[i]] = 0
-
-      rightModel = deepcopy(currentNode.model)
-      rightModel.colUpper[candidatesToBranch[i]] = 1
-      rightModel.colLower[candidatesToBranch[i]] = 1
-
-      solve(leftModel)
-      gains[1,i] = (leftModel.objVal - currentNode.model.objVal)/(currentNode.model.colVal[candidatesToBranch[i]])
-      solve(rightModel)
-      gains[2,i] = (rightModel.objVal - currentNode.model.objVal)/(1 - currentNode.model.colVal[candidatesToBranch[i]])
-    end
-
-    indBestFrac = ceil(Int,indmax(gains)/2)
-    indToBranch = candidatesToBranch[indBestFrac]
+    indMaxPSC = indmax(pscMatrix[indFracIndices,1].*(1-currentNode.model.colVal[indFracIndices]))
+    indToBranch = fracIndices[indMaxPSC]
 
     leftModel = deepcopy(currentNode.model)
     leftModel.colUpper[indToBranch] = 0
@@ -140,28 +124,39 @@ function pseudocost(currentNode::node, binaryIndices::Vector{Int64}, amountOfBra
     rightModel.colUpper[indToBranch] = 1
     rightModel.colLower[indToBranch] = 1
 
+    leftDelta = abs(currentNode.model.objVal - leftModel.objVal)/currentNode.model.colVal[indToBranch]
+    rightDelta = abs(currentNode.model.objVal - rightModel.objVal)/(1-currentNode.model.colVal[indToBranch])
+
+    pscMatrix[indMaxPSC, 2]+=1
+    pscMatrix[indMaxPSC, 1] = (pscMatrix[indMaxPSC,1] + ((leftDelta + rightDelta)/2))/pscMatrix[indMaxPSC, 2]
+
     leftChild = node(currentNode.level+1, leftModel)
     rightChild = node(currentNode.level+1, rightModel)
 
-    return leftChild, rightChild
+    return leftChild, rightChild, pscMatrix
 end
 
 ## Receives node and creates two children by setting a variable to 0 and 1 respectively
-function branch(currentNode::node, binaryIndices::Vector{Int64}, method::Symbol)
+function branch(currentNode::node, binaryIndices::Vector{Int64}, method::Symbol;
+                amountOfBranches::Int64 = 10^10, pscMatrix::Matrix{Float64} = ones(1,1))
 
-  if method == :fractioned
-    leftChild, rightChild = fractioned(currentNode, binaryIndices)
+  if method == :fractional
+    leftChild, rightChild = fractional(currentNode, binaryIndices)
   elseif method == :strong
-    amountOfBranches = 50
-    leftChild, rightChild = strong(currentNode, binaryIndices, amountOfBranches)
+    leftChild, rightChild, pscMatrix = strong(currentNode, binaryIndices, amountOfBranches, pscMatrix)
   elseif method == :pseudocost
-    amountOfBranches = 50
-    leftChild, rightChild = pseudocost(currentNode, binaryIndices, amountOfBranches)
+    leftChild, rightChild, pscMatrix = pseudocost(currentNode, binaryIndices, pscMatrix)
+  elseif method == :hybrid
+    if currentNode.level <= 3
+      leftChild, rightChild, pscMatrix = strong(currentNode, binaryIndices, 10^10, pscMatrix)
+    else
+      leftChild, rightChild, pscMatrix = pseudocost(currentNode, binaryIndices, pscMatrix)
+    end
   else
     println("Error on branching method defition")
   end
 
-  return leftChild, rightChild
+  return leftChild, rightChild, pscMatrix
 end
 
 function obtainBoundList(nodeList)
@@ -169,7 +164,6 @@ function obtainBoundList(nodeList)
   for i = 1 : length(nodeList)
     boundList[i] = nodeList[i].model.objVal
   end
-
   return boundList
 end
 
@@ -212,6 +206,10 @@ function solveMIP(m::JuMP.Model)
   branched = false # flag that indicates if a branch has occurred in this iteration
   traverse = 1 # 1 for breadth, -1 for depth
   tol = 0.01 # tolerance (%)
+
+  # Initializing pseudo-cost matrix
+  pscMatrix = [ones(length(binaryIndices)) zeros(length(binaryIndices))]
+
   time0 = time_ns()
 
   while !isempty(nodes) && abs((bestVal - bestBound)/bestVal) > tol && (time_ns()-time0)/1e9 < 600
@@ -238,7 +236,7 @@ function solveMIP(m::JuMP.Model)
           end
         elseif nodes[1].model.objVal <= bestVal
           # Relaxed solution is not binary and should not be pruned by limit -- branch
-          leftChild, rightChild = branch(nodes[1], binaryIndices, :fractioned)
+          leftChild, rightChild, pscMatrix = branch(nodes[1], binaryIndices, :hybrid; pscMatrix = pscMatrix)
           branched = true
         end
       end
