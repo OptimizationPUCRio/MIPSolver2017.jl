@@ -7,14 +7,19 @@ function fpump(mod::JuMP.Model, binI::Vector{Int64})
   obf = JuMP.prepAffObjective(m)
   tam=m.numCols
   n=length(binI)
+  
+  v = Variable.(m, 1:tam)
+
+  for i in binI
+    @constraint(m,0 <= v[i])
+    @constraint(m, v[i] <= 1)
+  end
 
   # conferir se o b&b da solve no modelo antes, se n der precisa fazer aqui
   solve(m)
   xvia=m.colVal
 
   xint=roundbin(xvia,binI,tam)
-
-  v = Variable.(m, 1:tam)
 
   d=dist(xvia,xint,binI)
 
@@ -28,7 +33,7 @@ function fpump(mod::JuMP.Model, binI::Vector{Int64})
     xvia = m.colVal
     d1 = m.objVal
 
-    if d1 == d
+    if d1 ≈ d
       #se o xint for igual ao anterior a distância permanecerá a mesma então criamos uma perturbação
 
       xint=mudaround(xvia,xint,binI,tam,n)
