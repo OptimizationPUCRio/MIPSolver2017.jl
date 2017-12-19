@@ -1,6 +1,3 @@
-using JuMP
-
-
 function cutting_planes(model::JuMP.Model, VecBin::Vector{Int}, MaxIter::Int64 = 5)
     tol = 1e-5
 
@@ -8,17 +5,29 @@ function cutting_planes(model::JuMP.Model, VecBin::Vector{Int}, MaxIter::Int64 =
 
     iter = 1
     convergence = -2 #not finished
-    H = zeros(1,4+n) #Iterations history
     X = 0
     z = 0
-    status = ""
 
     while convergence == -2
-        X, z, status = solve_LP(Astd, b, cstd, xlb, xub, solver)
+        t_1 , t_2, t_3 = solve_LP(Astd, b, cstd, xlb, xub, solver)
+
+        if flag_sense == 1
+            if isnan(t_2)
+                return 0, -z
+            end
+        else
+            if isnan(t_2)
+                return 0, z
+            end
+        end
+
+
+
+        X, z, status = t_1 , t_2, t_3
+
 
         # Finding fractional variable address
         j = find(min.(X[1:n]-floor.(X[1:n]),ceil.(X[1:n])-X[1:n]).>tol)
-
         # Removing index from continous variables
         tmp = min(size(VecBin)[1], size(j)[1])
         tmp_ind = []
@@ -38,73 +47,117 @@ function cutting_planes(model::JuMP.Model, VecBin::Vector{Int}, MaxIter::Int64 =
         #Test convergence
         if length(j) == 0
 
-            #return X[1:n], z
             convergence = 1
         elseif iter >= MaxIter
             j = j[1]
-
             convergence  = -1
         else
-            j = j[1] #pick a fractional variable address (the first one)
+            j = j[1] #pick a fractional and binary variable address (the first one)
 
-            #Calculating Chvatal-Gomory coefficients
-            NBas = find(X.<=tol) #finding nonbasic variable addresses
-            Bas = deleteat!(collect(1:n), NBas) #finding basic variable addresses
-            i = find(Bas.==j) # finding dictionary line related to the fractional variable
+            NBas = find(X .<= tol)
+            Bas = deleteat!(collect(1:n), NBas)
 
-            D=((Astd[:,Bas]'*Astd[:,Bas])\Astd[:,Bas]')*Astd[:,NBas]
-            q0 =  floor.(X[j])
-            qi = zeros(1,n)
-            qi[j] = 1
-            qi[NBas] = floor.(D[i,:])
+            # u = Linha do dicionario correspondente a variavel x_j
+            u = find(Bas.== j)
 
-            #Adding the cut as new a constraint into the problem stand. form
-            Astd = [[Astd zeros(m,1)]; [qi 1]] #new constrait and new slack
-            b = [b;q0]
-            cstd = [cstd;0]
+            DB = X[Bas]
+            DN = ((Astd[:,Bas]'*Astd[:,Bas])\Astd[:,Bas]')*Astd[:,NBas]
+
+            a0 = X[Bas]
+            a = zeros(size(Bas)[1],n)
+
+            a[:,NBas] = DN
+            for i = 1:size(Bas)[1]
+              a[i,Bas[i]] = 1
+            end
+            a[find(abs.(a) .< tol)] = 0
+
+            N1 = intersect(deleteat!(copy(VecBin),find(VecBin .== j)),NBas)
+            N2 = intersect(deleteat!(collect(1:n), VecBin),NBas)
+
+            f0 = a0[u] - floor.(a0[u])
+            f0 = f0[1]
+
+
+            f = a[u,union(N1,N2)] - floor.(a[u,union(N1,N2)])
+
+            A_cut = zeros(1,n)
+
+            A_cut[j] = 1
+            if size(intersect(find( f .<= f0),N1))[1] != 0
+                A_cut[intersect(find( f .<= f0),N1)] = floor.(a[u,intersect(find( f .<= f0),N1)])
+            end
+            if size(intersect(find( f .>  f0),N1))[1] != 0
+                A_cut[intersect(find( f .>  f0),N1)] = floor.(a[u,intersect(find( f .>  f0),N1)]) + (f[intersect(find( f .>  f0),N1)] - f0)/(1 - f0)
+            end
+            if size(intersect(find(a[u,:] .< 0), N2))[1] != 0
+                A_cut[intersect(find(a[u,:] .< 0), N2)] = a[intersect(find(a[u,:] .< 0), N2)]*(1/(1-f0))
+            end
+
+
+            b_cut = floor.(a0[u])
+
+            Astd = [[Astd zeros(m,1)]; [A_cut 1]]
+            b = [b ; b_cut]
+
+            cstd = [cstd ; 0]
             xlb = [xlb; 0]
             xub = [xub; +Inf]
             m+=1
             n+=1
             iter+=1
+
         end
     end
+    model_F = compose_model(Astd, b, cstd, xlb, xub, flag_sense, solver, X, z)
 
-    println(X)
-    println(z)
-    println(status)
-    print(iter)
-    model_F = compose_model(Astd, b, cstd, xlb, xub, flag_sense, solver, X, z, status)
+    if isnan(getobjectivevalue(model_F))
+        return model_F, convergence, getobjectivevalue(model_F), 0
 
-    return model_F
+    else
+        return model_F, convergence, getobjectivevalue(model_F), 1
+    end
 end
 
 function extract_data(model::JuMP.Model)
+
     A = full(JuMP.prepConstrMatrix(model))
     c = JuMP.prepAffObjective(model)
     m, n = size(A)
 
-    Astd = zeros(m,m+n)
-    cstd = zeros(m+n)
-    b = zeros(n,1)
+    xlb = copy(model.colLower)
+    xub = copy(model.colUpper)
 
-    Astd = [A eye(m)]
-    cstd = [c ; zeros(m)]
+    rowlb, rowub = JuMP.prepConstrBounds(model)
+
+    folgas = find(rowlb .!= rowub)
+    s_f = size(folgas)[1]
+
+    Astd = [A zeros(m,s_f)]
+
+    for i = 1:size(folgas)[1]
+        if rowlb[folgas[i]] == -Inf
+            Astd[folgas[i],n+i] += 1
+        else
+            Astd[folgas[i],n+i] -= 1
+        end
+    end
+
+    cstd = [c;zeros(s_f)]
 
     xlb = copy(model.colLower)
     xub = copy(model.colUpper)
 
-    nxlb = zeros(n+m,1)
-    nxub = zeros(n+m,1)
+    nxlb = zeros(n+s_f,1)
+    nxub = zeros(n+s_f,1)
+
     nxlb[1:size(xlb)[1]] = xlb
-    nxlb[size(xlb)[1]+1 : n+m] = 0
+    nxlb[size(xlb)[1]+1 : s_f+n] = 0
+
     nxub[1:size(xlb)[1]] = xub
-    nxub[size(xub)[1]+1 : n+m] = +Inf
+    nxub[size(xub)[1]+1 : s_f+n] = +Inf
 
-
-    rowlb, rowub = JuMP.prepConstrBounds(model)
-    solver = model.solver
-
+    b = zeros(m,1)
     for i in 1:m
         if rowlb[i] == -Inf
             b[i] = rowub[i]
@@ -113,15 +166,15 @@ function extract_data(model::JuMP.Model)
         end
     end
 
-
     flag_sense = 0
 
     if model.objSense == :Min
-        cstd = -cstd
-        flag_sense = 1
+    cstd = -cstd
+    flag_sense = 1
     end
 
     m, n = size(Astd)
+    solver = model.solver
 
     return Astd, b, cstd, nxlb, nxub, solver, m, n, flag_sense
 end
@@ -140,7 +193,8 @@ function solve_LP(Astd, b, cstd, xlb, xub, solver)
     return model_LP.colVal, model_LP.objVal, status
 end
 
-function compose_model(Astd, b, cstd, xlb, xub, flag_sense, solver, X, z, status)
+function compose_model(Astd, b, cstd, xlb, xub, flag_sense, solver, X, z)
+
     m, n = size(Astd)
 
     model_F = Model(solver=solver)
@@ -153,14 +207,13 @@ function compose_model(Astd, b, cstd, xlb, xub, flag_sense, solver, X, z, status
     if flag_sense == 1
         cstd = -cstd
         @objective(model_F, :Min, sum(cstd[j]*x[j] for j=1:n))
+        model_F.objVal = -z
     else
         @objective(model_F, :Max, sum(cstd[j]*x[j] for j=1:n))
+        model_F.objVal = z
     end
 
     model_F.colVal = X
-    model_F.objVal = z
-    model_F.ext[:status] = status
-
 
     return model_F
 end

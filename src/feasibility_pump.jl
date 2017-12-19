@@ -1,21 +1,27 @@
 using JuMP
 
-#essa função recebe um modelo relaxado e os indices das variaveis que deveriam ser binarias
+#essa função recebe um problema relaxado e os indices das variaveis que deveriam ser binarias
 #apartir disso retorna uma solução viável para o problema, no caso de min isso nos da um upperbound
 function fpump(mod::JuMP.Model, binI::Vector{Int64})
   m=deepcopy(mod)
+  obf = JuMP.prepAffObjective(m)
   tam=m.numCols
   n=length(binI)
+  
+  v = Variable.(m, 1:tam)
+
+  #=for i in binI
+    @constraint(m,0 <= v[i])
+    @constraint(m, v[i] <= 1)
+  end=#
 
   # conferir se o b&b da solve no modelo antes, se n der precisa fazer aqui
   solve(m)
-  xotim=m.colVal
+  xvia=m.colVal
 
-  xint=roundbin(xotim,binI,tam)
+  xint=roundbin(xvia,binI,tam)
 
-  v = Variable.(m, 1:tam)
-
-  d=dist(xotim,xint,binI)
+  d=dist(xvia,xint,binI)
 
   cont=0
   while d>1e-7 && cont < 1e3
@@ -24,27 +30,34 @@ function fpump(mod::JuMP.Model, binI::Vector{Int64})
     @objective(m, Min, sum{ ifelse(xint[i] == 0  , v[i] , 0) + ifelse(xint[i] == 1  , xint[i] - v[i], 0), i in binI})
 
     solve(m)
-    xotim=m.colVal
-    d1 = dist(xotim,xint,binI)
-    if d1 == d
-      xint=mudaround(xint,binI,tam,n)
-      d = dist(xotim,xint,binI)
+    xvia = m.colVal
+    d1 = m.objVal
+
+    if d1 ≈ d
+      #se o xint for igual ao anterior a distância permanecerá a mesma então criamos uma perturbação
+
+      xint=mudaround(xvia,xint,binI,tam,n)
+      d = dist(xvia,xint,binI)
+
     else
-      xint=roundbin(xotim,binI,tam)
+      xint=roundbin(xvia,binI,tam)
       d=d1
     end
   end
 
+  objval=obf'*xvia
+
   if d <= 1e-7
-    return true, xotim
+    return xvia, objval
   end
-  return false, 0
+  return false, false
 
 end
 
 
 function dist(x,xint,binI)
   dist=0
+  soma=0
   for i  in binI
     if xint[i] == 0
       soma = x[i] - 0
@@ -68,9 +81,10 @@ function roundbin(x::Vector, binind::Vector{Int64}, tam::Int64)
   return xint
 end
 
-function mudaround(xint::Vector, binind::Vector{Int64}, tam::Int64, n::Int64)
-  quant=Int.(ceil(n/400))
-  ind = rand(binind,quant)
+function mudaround(x::Vector, xint::Vector, binind::Vector{Int64}, tam::Int64, n::Int64)
+
+  ind=indChange(x,xint,binind,tam,n)
+
   for i  in ind
     if xint[i] == 1
       xint[i] = 0
@@ -79,4 +93,42 @@ function mudaround(xint::Vector, binind::Vector{Int64}, tam::Int64, n::Int64)
     end
   end
   return xint
+end
+
+
+#essa função nos da os indices aleatorios das variaveis com maiores scores
+function indChange(x::Vector, xint::Vector, binind::Vector{Int64}, tam::Int64, n::Int64)
+  vet=zeros(n)
+
+  #preenche um vetor de scores (dif entre xvia e xint das variaveis binarias)
+  j=1;
+  for i in binind
+    vet[j] = abs(x[i] - xint[i])
+    j=j+1
+  end
+
+  #p é um vetor que define a permutação dos indices de vet que o coloca em ordem decrescente
+  p=sortperm(vet,rev=true)
+  #como o util para mim são os índices das variaveis originais organizamos binind dessa forma
+  novob=binind[p]
+
+  #quero mudar apenas uma certa quantidade de indices, quanto menos melhor
+  quant=Int.(ceil(n/400))
+
+  if n>400
+    div=0.01
+  else
+    div=0.1
+  end
+
+  #quero que os ind sejam das variaveis com maiores scores (uma certa proporção dos primeiros)
+
+  percent=Int.(ceil(div*n))
+
+  j=randperm(percent)[1:quant]
+  ind=Int.(zeros(quant))
+  for k in 1:quant
+    ind[k]=novob[j[k]]
+  end
+  return ind
 end
