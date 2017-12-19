@@ -9,7 +9,22 @@ function cutting_planes(model::JuMP.Model, VecBin::Vector{Int}, MaxIter::Int64 =
     z = 0
 
     while convergence == -2
-        X, z, status = solve_LP(Astd, b, cstd, xlb, xub, solver)
+        t_1 , t_2, t_3 = solve_LP(Astd, b, cstd, xlb, xub, solver)
+
+        if flag_sense == 1
+            if isnan(t_2)
+                return 0, -z
+            end
+        else
+            if isnan(t_2)
+                return 0, z
+            end
+        end
+
+
+
+        X, z, status = t_1 , t_2, t_3
+
 
         # Finding fractional variable address
         j = find(min.(X[1:n]-floor.(X[1:n]),ceil.(X[1:n])-X[1:n]).>tol)
@@ -75,15 +90,12 @@ function cutting_planes(model::JuMP.Model, VecBin::Vector{Int}, MaxIter::Int64 =
             if size(intersect(find( f .>  f0),N1))[1] != 0
                 A_cut[intersect(find( f .>  f0),N1)] = floor.(a[u,intersect(find( f .>  f0),N1)]) + (f[intersect(find( f .>  f0),N1)] - f0)/(1 - f0)
             end
-            if size(intersect(find(a[u,:] .> 0), N2))[1] != 0
-                A_cut[intersect(find(a[u,:] .> 0), N2)] = a[intersect(find(a[u,:] .> 0), N2)]
-            end
             if size(intersect(find(a[u,:] .< 0), N2))[1] != 0
-                A_cut[intersect(find(a[u,:] .< 0), N2)] = a[intersect(find(a[u,:] .< 0), N2)]*(f0/(1-f0))
+                A_cut[intersect(find(a[u,:] .< 0), N2)] = a[intersect(find(a[u,:] .< 0), N2)]*(1/(1-f0))
             end
 
 
-            b_cut = floor(f0)
+            b_cut = floor.(a0[u])
 
             Astd = [[Astd zeros(m,1)]; [A_cut 1]]
             b = [b ; b_cut]
