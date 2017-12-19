@@ -10,10 +10,10 @@ function fpump(mod::JuMP.Model, binI::Vector{Int64})
   
   v = Variable.(m, 1:tam)
 
-  for i in binI
+  #=for i in binI
     @constraint(m,0 <= v[i])
     @constraint(m, v[i] <= 1)
-  end
+  end=#
 
   # conferir se o b&b da solve no modelo antes, se n der precisa fazer aqui
   solve(m)
@@ -57,6 +57,7 @@ end
 
 function dist(x,xint,binI)
   dist=0
+  soma=0
   for i  in binI
     if xint[i] == 0
       soma = x[i] - 0
