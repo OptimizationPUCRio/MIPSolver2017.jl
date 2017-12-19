@@ -228,8 +228,9 @@ function solveMIP(m::JuMP.Model; branchMethod = :strong, traverseMethod = :mixed
   pscMatrix = [ones(length(binaryIndices)) zeros(length(binaryIndices))]
 
   time0 = time_ns()
+  timeLimit = 1800
 
-  while !isempty(nodes) && abs((bestVal - bestBound)/bestVal) > tol && (time_ns()-time0)/1e9 < 600
+  while !isempty(nodes) && abs((bestVal - bestBound)/bestVal) > tol && (time_ns()-time0)/1e9 < timeLimit
 
     # Change traverse method every 10 iterations for better bound discovery
     if traverseMethod == :mixed && iter%10 == 0
@@ -303,7 +304,10 @@ function solveMIP(m::JuMP.Model; branchMethod = :strong, traverseMethod = :mixed
   t = toc()
   m.ext[:time] = t
 
-  println(string("Nodes: ",m.ext[:nodes]))
+  # Retorna status :userlimit caso tenha extrapolado o tempo
+  if m.ext[:time] >= timeLimit
+    m.ext[:status] = :userlimit
+  end
 
   return m.ext[:status]
 end
