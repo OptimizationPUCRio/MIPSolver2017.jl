@@ -9,7 +9,7 @@
 module feasible_solution
 using JuMP
 
-include("branch_and_bound.jl")
+#include("branch_and_bound.jl")
 using Combinatorics
 
 """

@@ -1,6 +1,6 @@
 # ------------------------------------------------------------------
 # Includes para os outros arquivos do resto da turma
-#include("funcoes_relax.jl")
+include("funcoes_relax.jl")
 include("feasible_solution.jl")
 
 
@@ -55,9 +55,10 @@ function strong(currentNode::node, binaryIndices::Vector{Int64}, amountOfBranche
     rightModel.colLower[candidatesToBranch[i]] = 1
 
     solve(leftModel)
-    bounds[1,i] = leftModel.objVal
     solve(rightModel)
+    bounds[1,i] = leftModel.objVal
     bounds[2,i] = rightModel.objVal
+
   end
 
   indBestFrac = ceil(Int,indmax(bounds)/2)
@@ -167,7 +168,7 @@ function obtainBoundList(nodeList)
 end
 
 ## Receives a mixed binary linear JuMP model
-function solveMIP(m::JuMP.Model; branchMethod = :strong, traverseMethod = :mixed, boolgrasptsp::Bool = false)
+function solveMIP(m::JuMP.Model; branchMethod = :strong, traverseMethod = :mixed, boolgrasptsp::Bool = false, cp  = false)
 
   tic()
 
@@ -178,13 +179,24 @@ function solveMIP(m::JuMP.Model; branchMethod = :strong, traverseMethod = :mixed
     flagConverted = 1
   end
 
-  # Best bounds: start as Inf
-  bestBound = -1e200
-  bestVal = 1e200
-
   # Create vector of indices of the binary variables
   binaryIndices = find(m.colCat .== :Bin)
   binarySolutions = 0
+
+  # Best bounds: start as Inf
+  if cp
+      cp_lb , flag = cutting_planes(m, binaryIndices, 15)
+      print("Bound cutting_planes = ", cp_lb, " e Flag = ", flag)
+      if flag == -1
+          bestBound = -1e200
+      else
+          bestBound = cp_lb
+      end
+  else
+      bestBound = -1e200
+  end
+
+  bestVal = 1e200
 
   flagOpt = 0 # flag that indicates if a viable solution has been found
 
@@ -206,7 +218,9 @@ function solveMIP(m::JuMP.Model; branchMethod = :strong, traverseMethod = :mixed
   nodes = Vector{node}(0)
   if status == :Optimal && isBinary(m, binaryIndices)
     # Solution of the relaxed problem is binary: optimal solution
-    bestBound = m.objVal
+    if !cp
+        bestBound = m.objVal
+    end
     bestVal = m.objVal
     binarySolutions = 1
   else
@@ -229,7 +243,7 @@ function solveMIP(m::JuMP.Model; branchMethod = :strong, traverseMethod = :mixed
 
   time0 = time_ns()
 
-  while !isempty(nodes) && abs((bestVal - bestBound)/bestVal) > tol && (time_ns()-time0)/1e9 < 600
+  while !isempty(nodes) && abs((bestVal - bestBound)/bestVal) > tol && (time_ns()-time0)/1e9 < 1800
 
     # Change traverse method every 10 iterations for better bound discovery
     if traverseMethod == :mixed && iter%10 == 0

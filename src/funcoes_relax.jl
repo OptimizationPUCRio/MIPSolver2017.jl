@@ -11,18 +11,9 @@ function cutting_planes(model::JuMP.Model, VecBin::Vector{Int}, MaxIter::Int64 =
     while convergence == -2
         t_1 , t_2, t_3 = solve_LP(Astd, b, cstd, xlb, xub, solver)
 
-        if flag_sense == 1
-            if isnan(t_2)
-                return 0, -z
-            end
-        else
-            if isnan(t_2)
-                return 0, z
-            end
+        if isnan(t_2)
+            break
         end
-
-
-
         X, z, status = t_1 , t_2, t_3
 
 
@@ -78,9 +69,7 @@ function cutting_planes(model::JuMP.Model, VecBin::Vector{Int}, MaxIter::Int64 =
             f0 = a0[u] - floor.(a0[u])
             f0 = f0[1]
 
-
             f = a[u,union(N1,N2)] - floor.(a[u,union(N1,N2)])
-
             A_cut = zeros(1,n)
 
             A_cut[j] = 1
@@ -88,7 +77,7 @@ function cutting_planes(model::JuMP.Model, VecBin::Vector{Int}, MaxIter::Int64 =
                 A_cut[intersect(find( f .<= f0),N1)] = floor.(a[u,intersect(find( f .<= f0),N1)])
             end
             if size(intersect(find( f .>  f0),N1))[1] != 0
-                A_cut[intersect(find( f .>  f0),N1)] = floor.(a[u,intersect(find( f .>  f0),N1)]) + (f[intersect(find( f .>  f0),N1)] - f0)/(1 - f0)
+                A_cut[intersect(find( f .>  f0),N1)] = floor.(a[u,intersect(find( f .>  f0),N1)]) + (f[intersect(find( f .>  f0),N1)]' - f0)/(1 - f0)
             end
             if size(intersect(find(a[u,:] .< 0), N2))[1] != 0
                 A_cut[intersect(find(a[u,:] .< 0), N2)] = a[intersect(find(a[u,:] .< 0), N2)]*(1/(1-f0))
@@ -109,14 +98,20 @@ function cutting_planes(model::JuMP.Model, VecBin::Vector{Int}, MaxIter::Int64 =
 
         end
     end
-    model_F = compose_model(Astd, b, cstd, xlb, xub, flag_sense, solver, X, z)
+    #model_F = compose_model(Astd, b, cstd, xlb, xub, flag_sense, solver, X, z)
 
-    if isnan(getobjectivevalue(model_F))
-        return model_F, convergence, getobjectivevalue(model_F), 0
+    solve(model)
 
+    if isnan(z) | (z > getobjectivevalue(model))
+        flag = -1
     else
-        return model_F, convergence, getobjectivevalue(model_F), 1
+        flag = 1
     end
+    if flag_sense == 1
+        z = -z
+    end
+
+    return z, flag
 end
 
 function extract_data(model::JuMP.Model)
