@@ -57,7 +57,7 @@ function cutting_planes(model::JuMP.Model, VecBin::Vector{Int}, MaxIter::Int64 =
             end
             a[find(abs.(a) .< tol)] = 0
 
-            N1 = intersect(deleteat!(copy(VecBin),j),NBas)
+            N1 = intersect(deleteat!(copy(VecBin),find(VecBin .== j)),NBas)
             N2 = intersect(deleteat!(collect(1:n), VecBin),NBas)
 
             f0 = a0[u] - floor.(a0[u])
@@ -67,14 +67,25 @@ function cutting_planes(model::JuMP.Model, VecBin::Vector{Int}, MaxIter::Int64 =
             f = a[u,union(N1,N2)] - floor.(a[u,union(N1,N2)])
 
             A_cut = zeros(1,n)
-            A_cut[intersect(find(f .<= f0), N1)] = f[intersect(find(f .<= f0), N1)]
-            A_cut[intersect(find(f .> f0), N1)] = f0*(1-f[intersect(find(f .> f0), N1)])/(1-f0)
-            A_cut[intersect(find(a[u,:] .> 0), N2)] = a[u,intersect(find(a[u,:] .> 0), N2)]
-            A_cut[intersect(find(a[u,:] .< 0), N2)] = f0/(1-f0) * a[u,intersect(find(a[u,:] .< 0), N2)]
 
-            b_cut = f0
+            A_cut[j] = 1
+            if size(intersect(find( f .<= f0),N1))[1] != 0
+                A_cut[intersect(find( f .<= f0),N1)] = floor.(a[u,intersect(find( f .<= f0),N1)])
+            end
+            if size(intersect(find( f .>  f0),N1))[1] != 0
+                A_cut[intersect(find( f .>  f0),N1)] = floor.(a[u,intersect(find( f .>  f0),N1)]) + (f[intersect(find( f .>  f0),N1)] - f0)/(1 - f0)
+            end
+            if size(intersect(find(a[u,:] .> 0), N2))[1] != 0
+                A_cut[intersect(find(a[u,:] .> 0), N2)] = a[intersect(find(a[u,:] .> 0), N2)]
+            end
+            if size(intersect(find(a[u,:] .< 0), N2))[1] != 0
+                A_cut[intersect(find(a[u,:] .< 0), N2)] = a[intersect(find(a[u,:] .< 0), N2)]*(f0/(1-f0))
+            end
 
-            Astd = [[Astd zeros(m,1)]; [A_cut -1]]
+
+            b_cut = floor(f0)
+
+            Astd = [[Astd zeros(m,1)]; [A_cut 1]]
             b = [b ; b_cut]
 
             cstd = [cstd ; 0]
@@ -86,10 +97,14 @@ function cutting_planes(model::JuMP.Model, VecBin::Vector{Int}, MaxIter::Int64 =
 
         end
     end
-
     model_F = compose_model(Astd, b, cstd, xlb, xub, flag_sense, solver, X, z)
 
-    return model_F, convergence, getobjectivevalue(model_F)
+    if isnan(getobjectivevalue(model_F))
+        return model_F, convergence, getobjectivevalue(model_F), 0
+
+    else
+        return model_F, convergence, getobjectivevalue(model_F), 1
+    end
 end
 
 function extract_data(model::JuMP.Model)
@@ -180,13 +195,13 @@ function compose_model(Astd, b, cstd, xlb, xub, flag_sense, solver, X, z)
     if flag_sense == 1
         cstd = -cstd
         @objective(model_F, :Min, sum(cstd[j]*x[j] for j=1:n))
+        model_F.objVal = -z
     else
         @objective(model_F, :Max, sum(cstd[j]*x[j] for j=1:n))
+        model_F.objVal = z
     end
 
     model_F.colVal = X
-    model_F.objVal = z
-
 
     return model_F
 end
