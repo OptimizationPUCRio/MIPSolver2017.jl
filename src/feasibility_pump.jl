@@ -10,16 +10,19 @@ function fpump(mod::JuMP.Model, binI::Vector{Int64})
   
   v = Variable.(m, 1:tam)
 
-  #=for i in binI
-    @constraint(m,0 <= v[i])
-    @constraint(m, v[i] <= 1)
-  end=#
-
   # conferir se o b&b da solve no modelo antes, se n der precisa fazer aqui
   solve(m)
   xvia=m.colVal
 
   xint=roundbin(xvia,binI,tam)
+  
+  if xint == false
+    for i in binI
+      @constraint(m,0 <= v[i])
+      @constraint(m, v[i] <= 1)
+    end
+    xint=roundbin(xrel,binI,tam)
+  end
 
   d=dist(xvia,xint,binI)
 
@@ -57,7 +60,6 @@ end
 
 function dist(x,xint,binI)
   dist=0
-  soma=0
   for i  in binI
     if xint[i] == 0
       soma = x[i] - 0
@@ -74,6 +76,9 @@ function roundbin(x::Vector, binind::Vector{Int64}, tam::Int64)
   for i  in 1:tam
     if i in binind
       xint[i] = round(x[i])
+      if xint[i] != 1 && xint[i] != 0
+        return false
+      end
     else
       xint[i] = x[i]
     end
