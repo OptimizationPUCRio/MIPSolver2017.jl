@@ -1,8 +1,10 @@
+
 # ------------------------------------------------------------------
 # Includes para os outros arquivos do resto da turma
 #include("funcoes_relax.jl")
-include("feasible_solution.jl")
-
+#include("feasible_solution.jl")
+include("feasibility_pump.jl")
+using feasibility_pump
 
 # Código original do Raphael
 mutable struct node
@@ -167,7 +169,7 @@ function obtainBoundList(nodeList)
 end
 
 ## Receives a mixed binary linear JuMP model
-function solveMIP(m::JuMP.Model; branchMethod = :strong, traverseMethod = :mixed, boolgrasptsp::Bool = false)
+function solveMIP(m::JuMP.Model; branchMethod = :strong, traverseMethod = :mixed, boolgrasptsp::Bool = false, boolfpump::Bool = true)
 
   tic()
 
@@ -228,8 +230,14 @@ function solveMIP(m::JuMP.Model; branchMethod = :strong, traverseMethod = :mixed
   pscMatrix = [ones(length(binaryIndices)) zeros(length(binaryIndices))]
 
   time0 = time_ns()
+  timeLimit = 1800
+  mudou = 0
 
-  while !isempty(nodes) && abs((bestVal - bestBound)/bestVal) > tol && (time_ns()-time0)/1e9 < 600
+  io = open("boundsrob.txt", "w")
+  write(io, "$bestVal : $bestBound : $binarySolutions\n")
+
+
+  while !isempty(nodes) && abs((bestVal - bestBound)/bestVal) > tol && (time_ns()-time0)/1e9 < timeLimit
 
     # Change traverse method every 10 iterations for better bound discovery
     if traverseMethod == :mixed && iter%10 == 0
@@ -250,6 +258,7 @@ function solveMIP(m::JuMP.Model; branchMethod = :strong, traverseMethod = :mixed
             m.colVal = copy(nodes[1].model.colVal)
             flagOpt = 1
             binarySolutions+=1
+            mudou=1
           end
         elseif nodes[1].model.objVal <= bestVal
           # Relaxed solution is not binary and should not be pruned by limit -- branch
@@ -273,11 +282,26 @@ function solveMIP(m::JuMP.Model; branchMethod = :strong, traverseMethod = :mixed
     else
       deleteat!(nodes, 1)
     end
+
+    if boolfpump && mudou == 0 && (iter == 1 || iter%30 == 0)
+      xvia, upbound = feasibility_pump.fpump(nodes[1].model,binaryIndices)
+      if xvia!=false && upbound < bestVal
+        bestVal = upbound
+        m.colVal = xvia
+        binarySolutions += 1
+        flagOpt = 1
+        status = :SubOptimal
+      end
+    else
+      mudou = 0
+    end
+
     iter+=1
 
     if iter == 1 || iter%10 == 0
       println("UB: $bestVal")
       println("LB: $bestBound")
+      write(io, "$bestVal : $bestBound : $binarySolutions\n")
     end
   end
 
@@ -303,7 +327,13 @@ function solveMIP(m::JuMP.Model; branchMethod = :strong, traverseMethod = :mixed
   t = toc()
   m.ext[:time] = t
 
-  println(string("Nodes: ",m.ext[:nodes]))
+  # Retorna status :userlimit caso tenha extrapolado o tempo
+  if m.ext[:time] >= timeLimit
+    m.ext[:status] = :userlimit
+  end
+
+  write(io, "$bestVal : $bestBound : $binarySolutions\n")
+  close(io);
 
   return m.ext[:status]
 end

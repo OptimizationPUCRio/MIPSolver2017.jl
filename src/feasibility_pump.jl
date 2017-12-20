@@ -1,3 +1,5 @@
+module feasibility_pump
+
 using JuMP
 
 #essa função recebe um problema relaxado e os indices das variaveis que deveriam ser binarias
@@ -7,21 +9,25 @@ function fpump(mod::JuMP.Model, binI::Vector{Int64})
   obf = JuMP.prepAffObjective(m)
   tam=m.numCols
   n=length(binI)
-  
-  v = Variable.(m, 1:tam)
 
-  for i in binI
-    @constraint(m,0 <= v[i])
-    @constraint(m, v[i] <= 1)
-  end
+  v = Variable.(m, 1:tam)
 
   # conferir se o b&b da solve no modelo antes, se n der precisa fazer aqui
   solve(m)
-  xvia=m.colVal
+  xrel=m.colVal
 
-  xint=roundbin(xvia,binI,tam)
+  xint=roundbin(xrel,binI,tam)
 
-  d=dist(xvia,xint,binI)
+  if xint == false
+    for i in binI
+      @constraint(m,0 <= v[i])
+      @constraint(m, v[i] <= 1)
+    end
+    xint=roundbin(xrel,binI,tam)
+  end
+
+
+  d=dist(xrel,xint,binI)
 
   cont=0
   while d>1e-7 && cont < 1e3
@@ -30,25 +36,25 @@ function fpump(mod::JuMP.Model, binI::Vector{Int64})
     @objective(m, Min, sum{ ifelse(xint[i] == 0  , v[i] , 0) + ifelse(xint[i] == 1  , xint[i] - v[i], 0), i in binI})
 
     solve(m)
-    xvia = m.colVal
+    xrel = m.colVal
     d1 = m.objVal
 
     if d1 ≈ d
       #se o xint for igual ao anterior a distância permanecerá a mesma então criamos uma perturbação
 
-      xint=mudaround(xvia,xint,binI,tam,n)
-      d = dist(xvia,xint,binI)
+      xint=mudaround(xrel,xint,binI,tam,n)
+      d = dist(xrel,xint,binI)
 
     else
-      xint=roundbin(xvia,binI,tam)
+      xint=roundbin(xrel,binI,tam)
       d=d1
     end
   end
 
-  objval=obf'*xvia
+  objval=obf'*xrel
 
   if d <= 1e-7
-    return xvia, objval
+    return xrel, objval
   end
   return false, false
 
@@ -58,9 +64,9 @@ end
 function dist(x,xint,binI)
   dist=0
   for i  in binI
-    if xint[i] == 0
+    if xint[i] ≈ 0
       soma = x[i] - 0
-    elseif xint[i] == 1
+    elseif xint[i] ≈ 1
       soma = 1 - x[i]
     end
     dist=dist+soma
@@ -73,6 +79,9 @@ function roundbin(x::Vector, binind::Vector{Int64}, tam::Int64)
   for i  in 1:tam
     if i in binind
       xint[i] = round(x[i])
+      if xint[i] != 1 && xint[i] != 0
+        return false
+      end
     else
       xint[i] = x[i]
     end
@@ -99,7 +108,7 @@ end
 function indChange(x::Vector, xint::Vector, binind::Vector{Int64}, tam::Int64, n::Int64)
   vet=zeros(n)
 
-  #preenche um vetor de scores (dif entre xvia e xint das variaveis binarias)
+  #preenche um vetor de scores (dif entre xrel e xint das variaveis binarias)
   j=1;
   for i in binind
     vet[j] = abs(x[i] - xint[i])
@@ -130,4 +139,7 @@ function indChange(x::Vector, xint::Vector, binind::Vector{Int64}, tam::Int64, n
     ind[k]=novob[j[k]]
   end
   return ind
+end
+
+
 end
