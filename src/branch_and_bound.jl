@@ -169,7 +169,7 @@ function obtainBoundList(nodeList)
 end
 
 ## Receives a mixed binary linear JuMP model
-function solveMIP(m::JuMP.Model; branchMethod = :strong, traverseMethod = :mixed, boolgrasptsp::Bool = false, boolfpump::Bool = true)
+function solveMIP(m::JuMP.Model; branchMethod = :strong, traverseMethod = :mixed, boolgrasptsp::Bool = false, boolfpump::Bool = false)
 
   tic()
 
@@ -230,10 +230,10 @@ function solveMIP(m::JuMP.Model; branchMethod = :strong, traverseMethod = :mixed
   pscMatrix = [ones(length(binaryIndices)) zeros(length(binaryIndices))]
 
   time0 = time_ns()
-  timeLimit = 1800
+  timeLimit = 800
   mudou = 0
 
-  io = open("boundsrob.txt", "w")
+  io = open("bounds.txt", "w")
   write(io, "$bestVal : $bestBound : $binarySolutions\n")
 
 
@@ -243,6 +243,30 @@ function solveMIP(m::JuMP.Model; branchMethod = :strong, traverseMethod = :mixed
     if traverseMethod == :mixed && iter%10 == 0
       traverse = (-1)*traverse
     end
+
+    if boolfpump &&  iter == 1
+      xvia, upbound = feasibility_pump.fpump(nodes[1].model,binaryIndices)
+      if xvia!=false && upbound < bestVal
+        bestVal = upbound
+        m.colVal = xvia
+        binarySolutions += 1
+        flagOpt = 1
+        status = :SubOptimal
+      end
+    elseif boolfpump && mudou == 0 && iter%10 == 0
+      xvia, upbound = feasibility_pump.fpump(nodes[1].model,binaryIndices)
+      if xvia!=false && upbound < bestVal
+        bestVal = upbound
+        m.colVal = xvia
+        binarySolutions += 1
+        flagOpt = 1
+        status = :SubOptimal
+        write(io, "$bestVal : $bestBound : $binarySolutions : FOI O PUMP\n")
+      end
+    else
+      mudou = 0
+    end
+
 
     branched = false
     # Check node lower bound. If greater than current best UB, prune by limit
@@ -259,6 +283,7 @@ function solveMIP(m::JuMP.Model; branchMethod = :strong, traverseMethod = :mixed
             flagOpt = 1
             binarySolutions+=1
             mudou=1
+            write(io, "$bestVal : $bestBound : $binarySolutions : FOI O SOLVE\n")
           end
         elseif nodes[1].model.objVal <= bestVal
           # Relaxed solution is not binary and should not be pruned by limit -- branch
@@ -283,18 +308,6 @@ function solveMIP(m::JuMP.Model; branchMethod = :strong, traverseMethod = :mixed
       deleteat!(nodes, 1)
     end
 
-    if boolfpump && mudou == 0 && (iter == 1 || iter%30 == 0)
-      xvia, upbound = feasibility_pump.fpump(nodes[1].model,binaryIndices)
-      if xvia!=false && upbound < bestVal
-        bestVal = upbound
-        m.colVal = xvia
-        binarySolutions += 1
-        flagOpt = 1
-        status = :SubOptimal
-      end
-    else
-      mudou = 0
-    end
 
     iter+=1
 
